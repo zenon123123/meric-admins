@@ -1,6 +1,6 @@
 from vkbottle.bot import Bot, Message
 from vkbottle import Keyboard, Text, VKAPIError
-from vkbottle.dispatch.rules import PayloadContainsRule  # Измененный импорт
+# from vkbottle.dispatch.rules import PayloadContainsRule  # Измененный импорт
 from vkbottle.api import API
 from vkbottle.dispatch.middlewares.abc import BaseMiddleware  # Измененный импорт для Middleware
 from typing import Optional, Dict, List, Any, Tuple
@@ -527,7 +527,7 @@ async def startup_task():
     scheduler.add_job(check_expired_mutes, 'interval', seconds=30)
     scheduler.start()
     logger.info("Планировщик задач запущен.")
-
+'''
 # Система запросов
 @bot.on.message(PayloadContainsRule({"action": "req_cancel"}))
 async def handle_request_cancel(message: Message):
@@ -570,7 +570,7 @@ async def process_decision(approver_id: int, request_id: str, decision: str):
         await bot.api.messages.send(peer_id=ADMIN_CHAT_ID, message=f"❌ Запрос `{request_id}` на `{command_text}` отклонен [id{approver_id}|{approver_admin['nickname']}]", random_id=0)
         log_action(approver_id, f"отклонил запрос от {request_data['requester_nick']}", details=f"ID {request_id}: {command_text}")
     if request_id in pending_requests: del pending_requests[request_id]
-
+'''
 # Основные команды
 @bot.on.message(text="/help")
 async def help_cmd(message: Message):
@@ -1267,6 +1267,7 @@ async def blacklist_list_cmd(message: Message):
         added_by_info = f"[id{added_by_admin['user_id']}|{added_by_admin['nickname']}]" if added_by_admin else "Неизвестно"
         text += (f"{i}. [id{entry['user_id']}|{user_name}]\n - Причина: {entry['reason']}\n - Добавил: {added_by_info}\n\n")
     await message.answer(text)
+'''
 @bot.on.message(PayloadContainsRule({"cmd": "plogs"}))
 async def profile_logs_handler(message: Message):
     if not await check_permission(message, "plogs"): return
@@ -1350,7 +1351,7 @@ async def show_activity_summary(message: Message):
                 f"{EMOJI['info']} Примечание: Указанная статистика является приблизительной. При большой нагрузке некоторые сообщения могут не быть учтены в реальном времени, однако это происходит крайне редко. Наш бот старается обрабатывать каждое ваше сообщение.")
     
     await message.answer(response, disable_mentions=1)
-
+'''
 @bot.on.chat_message(action=["chat_leave_user", "chat_kick_user"])
 async def handle_user_departure(message: Message):
     logger.info(f"Сработало событие ухода из чата: {message.action.type}. Peer ID: {message.peer_id}")
