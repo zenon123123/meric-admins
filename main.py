@@ -506,8 +506,8 @@ class MessageLoggingMiddleware(BaseMiddleware):
             try: db.add_message(message.from_id, message.peer_id, datetime.now())
             except Exception as e: logger.error(f"Ошибка при логировании сообщения: {e}")
 
-bot.labeler.message_view.register_middleware(MuteCheckMiddleware)
-bot.labeler.message_view.register_middleware(MessageLoggingMiddleware)
+# bot.labeler.message_view.register_middleware(MuteCheckMiddleware)
+# bot.labeler.message_view.register_middleware(MessageLoggingMiddleware)
 
 async def check_expired_mutes():
     expired_mutes = db.get_expired_mutes()
