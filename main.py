@@ -1,7 +1,7 @@
-from vkbottle.bot import Bot, Message
+from vkbottle import Bot, Message
 from vkbottle import Keyboard, Text, BaseMiddleware, VKAPIError
-from vkbottle.dispatch.rules.base import PayloadContainsRule
-from vkbottle.api import API
+from vkbottle import PayloadContainsRule
+from vkbottle import API
 from typing import Optional, Dict, List, Any, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
