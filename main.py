@@ -56,7 +56,7 @@ def load_config():
     "setrules": 4, "rules": 0, "clear": 6, "setwelcome": 4, "setdj": 4, "msgcount": 4,
     "editcmd": 8, "editcmd_global": 9, "newadmin": 4, "kick": 4, "setlvl": 5, "setnick": 4, "profile": 0, "admins": 0, "adm": 0,
     "bal": 0, "daily": 0, "top": 0, "pay": 0, "dice": 0, "slots": 0, "bladd": 6, "blrem": 6, "bllist": 6, "logs": 5,
-    "createdj": 5, "deletedj": 5, "peremdj": 5, "ai": 0 , "bonus": 4, "unbonus": 4, "bonuslist": 0,
+    "createdj": 5, "deletedj": 5, "peremdj": 5, "ai": 0 , "bonus": 4, "unbonus": 4, "bonuslist": 0
     }
 
     for cmd, level in defaults.items():
