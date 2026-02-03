@@ -49,14 +49,38 @@ def load_config():
         logger.warning("ID чата для администраторов (admin_chat_id) не указан в config.ini. Система запросов будет отключена.")
 
     godmode_key = config.get("SECURITY", "godmode_key", fallback="default_key")
-    default_cmd_levels = {cmd: int(level) for cmd, level in config.items("CMD_LEVELS")}
+    
+    # Исправляем обработку CMD_LEVELS с возможными запятыми
+    default_cmd_levels = {}
+    if config.has_section("CMD_LEVELS"):
+        for cmd, level_str in config.items("CMD_LEVELS"):
+            try:
+                # Убираем возможные пробелы и запятые в конце
+                level_str_clean = level_str.strip().rstrip(',')
+                level = int(level_str_clean)
+                default_cmd_levels[cmd] = level
+            except ValueError as e:
+                logger.warning(f"Неверное значение уровня для команды '{cmd}': '{level_str}'. Используется значение по умолчанию.")
+                # Можно установить значение по умолчанию для этой команды
+                # Например, для команды 'bonus' установим 4
+                if cmd in ["bonus", "unbonus"]:
+                    default_cmd_levels[cmd] = 4
+                elif cmd == "bonuslist":
+                    default_cmd_levels[cmd] = 0
+                else:
+                    default_cmd_levels[cmd] = 9  # Максимальный по умолчанию
+    
     defaults = {
-    "plogs": 4, "giverub": 8, "mute": 3, "unmute": 3, "zov": 3, "pred": 2, "unpred": 2,
-    "warn": 3, "unwarn": 3, "addtag": 4, "deltag": 4, "tag": 0, "taglist": 0,
-    "setrules": 4, "rules": 0, "clear": 6, "setwelcome": 4, "setdj": 4, "msgcount": 4,
-    "editcmd": 8, "editcmd_global": 9, "newadmin": 4, "kick": 4, "setlvl": 5, "setnick": 4, "profile": 0, "admins": 0, "adm": 0,
-    "bal": 0, "daily": 0, "top": 0, "pay": 0, "dice": 0, "slots": 0, "bladd": 6, "blrem": 6, "bllist": 6, "logs": 5,
-    "createdj": 5, "deletedj": 5, "peremdj": 5, "ai": 0 , "bonus": 4, "unbonus": 4, "bonuslist": 0
+        "plogs": 4, "giverub": 8, "mute": 3, "unmute": 3, "zov": 3, "pred": 2, "unpred": 2,
+        "warn": 3, "unwarn": 3, "addtag": 4, "deltag": 4, "tag": 0, "taglist": 0,
+        "setrules": 4, "rules": 0, "clear": 6, "setwelcome": 4, "setdj": 4, "msgcount": 4,
+        "editcmd": 8, "editcmd_global": 9, "newadmin": 4, "kick": 4, "setlvl": 5, "setnick": 4, "profile": 0, "admins": 0, "adm": 0,
+        "bal": 0, "daily": 0, "top": 0, "pay": 0, "dice": 0, "slots": 0, "bladd": 6, "blrem": 6, "bllist": 6, "logs": 5,
+        "createdj": 5, "deletedj": 5, "peremdj": 5, "ai": 0,
+        # Добавляем новые команды для системы бонусов
+        "bonus": 4,           # Уровень для выдачи/снятия бонуса
+        "unbonus": 4,         # Уровень для снятия бонуса
+        "bonuslist": 0        # Просмотр бонусов для всех
     }
 
     for cmd, level in defaults.items():
