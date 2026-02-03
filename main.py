@@ -1,7 +1,6 @@
-from vkbottle import Bot, Message
-from vkbottle import Keyboard, Text, VKAPIError
-from vkbottle.bot import rules
-from vkbottle.dispatch.middlewares import BaseMiddleware
+from vkbottle.bot import Bot, Message
+from vkbottle import Keyboard, Text, BaseMiddleware, VKAPIError
+from vkbottle.dispatch.rules.base import PayloadContainsRule
 from vkbottle.api import API
 from typing import Optional, Dict, List, Any, Tuple
 from datetime import datetime, timedelta
@@ -17,9 +16,6 @@ import uuid
 import functools
 from loguru import logger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
-# Используйте PayloadRule вместо PayloadContainsRule
-from vkbottle.bot.rules import PayloadRule
 
 GEMINI_API_KEY = "AIzaSyB84kpkSxdAYfoZvIBSPQ9I2bncwSOabKc"
 
