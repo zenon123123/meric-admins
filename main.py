@@ -1,6 +1,6 @@
 from vkbottle.bot import Bot, Message
 from vkbottle import Keyboard, Text, BaseMiddleware, VKAPIError
-from vkbottle.dispatch.rules.base import PayloadContainsRule
+# from vkbottle.dispatch.rules.base import PayloadContainsRule
 from vkbottle.api import API
 from typing import Optional, Dict, List, Any, Tuple
 from datetime import datetime, timedelta
@@ -526,7 +526,7 @@ async def startup_task():
     scheduler.add_job(check_expired_mutes, 'interval', seconds=30)
     scheduler.start()
     logger.info("Планировщик задач запущен.")
-
+"""
 # Система запросов
 @bot.on.message(PayloadContainsRule({"action": "req_cancel"}))
 async def handle_request_cancel(message: Message):
@@ -569,7 +569,7 @@ async def process_decision(approver_id: int, request_id: str, decision: str):
         await bot.api.messages.send(peer_id=ADMIN_CHAT_ID, message=f"❌ Запрос `{request_id}` на `{command_text}` отклонен [id{approver_id}|{approver_admin['nickname']}]", random_id=0)
         log_action(approver_id, f"отклонил запрос от {request_data['requester_nick']}", details=f"ID {request_id}: {command_text}")
     if request_id in pending_requests: del pending_requests[request_id]
-
+"""
 # Основные команды
 @bot.on.message(text="/help")
 async def help_cmd(message: Message):
@@ -1266,6 +1266,7 @@ async def blacklist_list_cmd(message: Message):
         added_by_info = f"[id{added_by_admin['user_id']}|{added_by_admin['nickname']}]" if added_by_admin else "Неизвестно"
         text += (f"{i}. [id{entry['user_id']}|{user_name}]\n - Причина: {entry['reason']}\n - Добавил: {added_by_info}\n\n")
     await message.answer(text)
+"""
 @bot.on.message(PayloadContainsRule({"cmd": "plogs"}))
 async def profile_logs_handler(message: Message):
     if not await check_permission(message, "plogs"): return
@@ -1276,8 +1277,9 @@ async def profile_logs_handler(message: Message):
         chat_id = int(payload["chat_id"])
     except (ValueError, KeyError, TypeError):
         return await message.answer(f"{EMOJI['error']} Некорректный или устаревший payload кнопки.")
-    
+
     await show_user_logs(message, target_id, chat_id)
+"""
 @bot.on.message(text=["/logs", "/logs <text>"])
 async def logs_cmd(message: Message, text: Optional[str] = None):
     if not await check_permission(message, "logs"): return
@@ -1316,7 +1318,7 @@ async def show_user_logs(message: Message, user_id: int, chat_id: int):
     header = f"{EMOJI['list']} Последние 20 действий для {target_nick}:\n\n"
     response_text = header + "\n".join(user_logs[-20:])
     await message.answer(response_text[:4096])
-
+"""
 @bot.on.message(PayloadContainsRule({"cmd": "activity"}))
 async def show_activity_summary(message: Message):
     try:
@@ -1349,7 +1351,7 @@ async def show_activity_summary(message: Message):
                 f"{EMOJI['info']} Примечание: Указанная статистика является приблизительной. При большой нагрузке некоторые сообщения могут не быть учтены в реальном времени, однако это происходит крайне редко. Наш бот старается обрабатывать каждое ваше сообщение.")
     
     await message.answer(response, disable_mentions=1)
-
+"""
 @bot.on.chat_message(action=["chat_leave_user", "chat_kick_user"])
 async def handle_user_departure(message: Message):
     logger.info(f"Сработало событие ухода из чата: {message.action.type}. Peer ID: {message.peer_id}")
