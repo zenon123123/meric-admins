@@ -1,4 +1,5 @@
-from vkbottle import Bot, Message
+from vkbottle import Bot
+from vkbottle.bot import Message
 from vkbottle import Keyboard, Text, BaseMiddleware, VKAPIError
 from vkbottle import PayloadContainsRule
 from vkbottle import API
