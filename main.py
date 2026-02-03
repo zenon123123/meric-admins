@@ -56,7 +56,7 @@ def load_config():
     "setrules": 4, "rules": 0, "clear": 6, "setwelcome": 4, "setdj": 4, "msgcount": 4,
     "editcmd": 8, "editcmd_global": 9, "newadmin": 4, "kick": 4, "setlvl": 5, "setnick": 4, "profile": 0, "admins": 0, "adm": 0,
     "bal": 0, "daily": 0, "top": 0, "pay": 0, "dice": 0, "slots": 0, "bladd": 6, "blrem": 6, "bllist": 6, "logs": 5,
-    "createdj": 5, "deletedj": 5, "peremdj": 5, "ai": 0 
+    "createdj": 5, "deletedj": 5, "peremdj": 5, "ai": 0 , "bonus": 4, "unbonus": 4, "bonuslist": 0,
     }
 
     for cmd, level in defaults.items():
@@ -75,7 +75,7 @@ def load_config():
     return vk_token, godmode_key, default_cmd_levels, casino_config
 
 class DatabaseManager:
-    VALID_ADMIN_COLUMNS = ["nickname", "position", "level", "status", "forum_link"]
+    VALID_ADMIN_COLUMNS = ["nickname", "position", "level", "status", "bonus"]
     def __init__(self, db_path): 
         self.db_path = db_path
 
@@ -91,10 +91,17 @@ class DatabaseManager:
                     position TEXT,
                     added_date TEXT,
                     status TEXT,
-                    forum_link TEXT,
+                    bonus TEXT,
                     PRIMARY KEY(user_id, chat_id)
                 )
             """)
+            try:
+                # Пробуем выполнить запрос с полем bonus
+                con.execute("SELECT bonus FROM admins LIMIT 1")
+            except sqlite3.OperationalError:
+                 # Если столбца нет, добавляем его
+                logger.info("Добавляем столбец 'bonus' в таблицу 'admins'...")
+                con.execute("ALTER TABLE admins ADD COLUMN bonus TEXT")
             con.execute("""
                 CREATE TABLE IF NOT EXISTS users_global (
                     user_id INTEGER PRIMARY KEY,
@@ -112,6 +119,7 @@ class DatabaseManager:
                     UNIQUE(chat_id, name)
                 )
             """)
+            
             con.execute("""CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, content TEXT NOT NULL, creator_id INTEGER NOT NULL, chat_id INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(name, chat_id))""")
             con.execute("""CREATE TABLE IF NOT EXISTS warnings (id INTEGER PRIMARY KEY AUTOINCREMENT, admin_user_id INTEGER, issuer_user_id INTEGER, reason TEXT, date TEXT, chat_id INTEGER NOT NULL)""")
             con.execute("""CREATE TABLE IF NOT EXISTS reprimands (id INTEGER PRIMARY KEY AUTOINCREMENT, admin_user_id INTEGER, issuer_user_id INTEGER, reason TEXT, date TEXT, chat_id INTEGER NOT NULL)""")
@@ -189,7 +197,18 @@ class DatabaseManager:
 
     def get_all_admins(self, chat_id: int) -> List[sqlite3.Row]:
         return self.fetchall("SELECT * FROM admins WHERE chat_id = ? ORDER BY level DESC, nickname ASC", (chat_id,))
-
+    
+    def get_admin_bonus(self, user_id: int, chat_id: int) -> Optional[str]:
+        row = self.fetchone("SELECT bonus FROM admins WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        return row['bonus'] if row and row['bonus'] else None
+    
+    def set_admin_bonus(self, user_id: int, chat_id: int, bonus_text: str):
+        self.execute("UPDATE admins SET bonus = ? WHERE user_id = ? AND chat_id = ?", 
+                     (bonus_text, user_id, chat_id), commit=True)
+    
+    def remove_admin_bonus(self, user_id: int, chat_id: int):
+        self.execute("UPDATE admins SET bonus = NULL WHERE user_id = ? AND chat_id = ?", 
+                     (user_id, chat_id), commit=True)
     def add_admin(self, user_id: int, chat_id: int, nickname: str, added_by: int, level=1, position="Без должности"):
         date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.execute("INSERT OR REPLACE INTO admins (user_id, chat_id, nickname, added_by, level, position, added_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'Активен')",
@@ -415,11 +434,17 @@ def parse_duration(time_str: str) -> Optional[timedelta]:
 def format_profile(admin_local: sqlite3.Row, user_global: sqlite3.Row, chat_id: int) -> str:
     added_by_admin = db.get_admin_by_id(admin_local['added_by'], chat_id)
     added_by_name = added_by_admin['nickname'] if added_by_admin else "Неизвестно"
+    
+    # Получаем бонус
+    bonus = db.get_admin_bonus(admin_local['user_id'], chat_id)
+    bonus_display = bonus if bonus else "Нет"
+    
     return (f"{EMOJI['admin']} Профиль администратора (в этом чате) {EMOJI['admin']}\n\n"
             f"{EMOJI['user']} Ник: {admin_local['nickname']}\n"
             f"{EMOJI['crown']} Должность: {admin_local['position']}\n"
             f"{EMOJI['star']} Уровень: {admin_local['level']}\n"
             f"{EMOJI['money']} Глобальный баланс: {user_global['balance'] if user_global else 100} фишек\n"
+            f"{EMOJI['star']} Бонус: {bonus_display}\n"  # Добавлена строка с бонусом
             f"{EMOJI['time']} Дата добавления (в этот чат): {admin_local['added_date']}\n"
             f"{EMOJI['admin']} Добавил: {added_by_name}\n"
             f"{EMOJI['info']} Статус: {admin_local['status']}\n"
@@ -597,6 +622,9 @@ async def help_cmd(message: Message):
 /setdj @упом/ник [должность] - Установить должность.
 /setnick @упом/ник Новый_ник - Изменить ник.
 /setlvl @упом/ник уровень - Изменить уровень (0-9).
+/bonus @упом/ник <текст> - Выдать бонус администратору.  
+/unbonus @упом/ник - Снять бонус с администратора.      
+/bonuslist - Список всех бонусов в чате.                  
 /editcmd <команда> <уровень> - Изменить доступ к команде.
 
 {EMOJI['ban']} Наказания
@@ -1606,6 +1634,111 @@ async def zov_cmd(message: Message, text: Optional[str] = None):
     await message.answer(final_message, disable_mentions=0)
     log_action(message.from_id, "использовал /zov", details=f"в чате {message.peer_id}")
 
+
+
+@bot.on.message(text="/bonuslist")
+async def bonuslist_cmd(message: Message):
+    if not await check_permission(message, "bonuslist"): 
+        # Можно сделать отдельный permission или использовать существующий
+        return
+    
+    # Получаем всех админов с бонусами
+    admins_with_bonuses = db.fetchall(
+        "SELECT * FROM admins WHERE chat_id = ? AND bonus IS NOT NULL AND bonus != '' ORDER BY level DESC",
+        (message.peer_id,)
+    )
+    
+    if not admins_with_bonuses:
+        return await message.answer(f"{EMOJI['info']} В этом чате нет активных бонусов у администраторов.")
+    
+    response_text = f"{EMOJI['money']} Список активных бонусов администраторов:\n\n"
+    
+    for i, admin in enumerate(admins_with_bonuses, 1):
+        response_text += (f"{i}. [id{admin['user_id']}|{admin['nickname']}] "
+                         f"({admin['position']}, ур: {admin['level']})\n"
+                         f"   {EMOJI['star']} Бонус: {admin['bonus']}\n\n")
+    
+    await message.answer(response_text[:4096], disable_mentions=1)
+
+@bot.on.message(text=["/unbonus", "/unbonus <text>"])
+async def unbonus_cmd(message: Message, text: Optional[str] = None):
+    if not await check_permission(message, "bonus"): 
+        return
+    
+    target_id, admin, _ = await parse_target_and_args(message)
+    if not admin: 
+        return await message.answer(f"{EMOJI['error']} Администратор не найден в этом чате.")
+    
+    target_global_data = db.get_user_global_data(target_id)
+    if target_global_data and target_global_data['dev_mode'] == 1 and message.from_id != admin['user_id']: 
+        return await message.answer(f"{EMOJI['lock']} Действие не может быть применено к этому администратору.")
+    
+    # Проверяем права снятия бонуса
+    issuer = db.get_admin_by_id(message.from_id, message.peer_id)
+    if not issuer:
+        return await message.answer(f"{EMOJI['error']} У вас нет прав администратора в этом чате.")
+    
+    if admin['level'] >= issuer['level'] and admin['user_id'] != issuer['user_id']:
+        return await message.answer(f"{EMOJI['error']} Нельзя снять бонус у админа с равным/большим уровнем!")
+    
+    # Проверяем, есть ли бонус
+    current_bonus = db.get_admin_bonus(target_id, message.peer_id)
+    if not current_bonus:
+        return await message.answer(f"{EMOJI['error']} У {admin['nickname']} нет активных бонусов.")
+    
+    # Снимаем бонус
+    db.remove_admin_bonus(target_id, message.peer_id)
+    log_action(message.from_id, "снял бонус", admin['user_id'], f"в чате {message.peer_id}")
+    
+    await message.answer(f"{EMOJI['success']} Бонус успешно снят с администратора {admin['nickname']}!")
+
+@bot.on.message(text=["/bonus", "/bonus <text>"])
+async def bonus_cmd(message: Message, text: Optional[str] = None):
+    if not await check_permission(message, "bonus"): 
+        # Добавим permission для этой команды
+        return
+    
+    if not text:
+        # Показываем справку
+        help_text = (f"{EMOJI['money']} Система бонусов для администраторов {EMOJI['money']}\n\n"
+                    f"{EMOJI['command']} Форматы команд:\n"
+                    f"/bonus @упом/ник <текст бонуса> - Выдать бонус админу\n"
+                    f"/unbonus @упом/ник - Снять бонус с админа\n"
+                    f"/bonuslist - Список всех бонусов в этом чате\n\n"
+                    f"{EMOJI['info']} Бонусы отображаются в профиле администратора и служат для поощрения за хорошую работу.")
+        return await message.answer(help_text)
+    
+    target_id, admin, bonus_text = await parse_target_and_args(message)
+    if not admin: 
+        return await message.answer(f"{EMOJI['error']} Администратор не найден в этом чате.")
+    
+    if not bonus_text:
+        # Показываем текущий бонус админа
+        current_bonus = db.get_admin_bonus(target_id, message.peer_id)
+        if current_bonus:
+            await message.answer(f"{EMOJI['money']} Текущий бонус {admin['nickname']}:\n{current_bonus}")
+        else:
+            await message.answer(f"{EMOJI['info']} У {admin['nickname']} нет активных бонусов.")
+        return
+    
+    target_global_data = db.get_user_global_data(target_id)
+    if target_global_data and target_global_data['dev_mode'] == 1 and message.from_id != admin['user_id']: 
+        return await message.answer(f"{EMOJI['lock']} Действие не может быть применено к этому администратору.")
+    
+    # Проверяем права выдачи бонуса (только админы с уровнем выше)
+    issuer = db.get_admin_by_id(message.from_id, message.peer_id)
+    if not issuer:
+        return await message.answer(f"{EMOJI['error']} У вас нет прав администратора в этом чате.")
+    
+    if admin['level'] >= issuer['level'] and admin['user_id'] != issuer['user_id']:
+        return await message.answer(f"{EMOJI['error']} Нельзя выдать бонус админу с равным/большим уровнем!")
+    
+    # Устанавливаем бонус
+    db.set_admin_bonus(target_id, message.peer_id, bonus_text.strip())
+    log_action(message.from_id, "выдал бонус", admin['user_id'], f"бонус: '{bonus_text.strip()}' в чате {message.peer_id}")
+    
+    await message.answer(f"{EMOJI['success']} Бонус успешно выдан администратору {admin['nickname']}!\n"
+                        f"{EMOJI['money']} Бонус: {bonus_text.strip()}")
 # Запуск бота
 def register_requestable_commands():
     COMMAND_HANDLERS.clear() 
@@ -1616,6 +1749,8 @@ def register_requestable_commands():
     COMMAND_HANDLERS["mute"], COMMAND_HANDLERS["unmute"] = mute_cmd, unmute_cmd
     COMMAND_HANDLERS["kick"], COMMAND_HANDLERS["setlvl"] = kick_cmd, setlvl_cmd
     COMMAND_HANDLERS["bladd"], COMMAND_HANDLERS["blrem"] = blacklist_add_cmd, blacklist_remove_cmd
+    COMMAND_HANDLERS["bonus"] = bonus_cmd
+    COMMAND_HANDLERS["unbonus"] = unbonus_cmd
     logger.info(f"Зарегистрировано {len(COMMAND_HANDLERS)} команд для системы запросов.")
 
 if __name__ == "__main__":
