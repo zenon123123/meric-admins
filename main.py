@@ -1599,7 +1599,7 @@ async def giverub_cmd(message: Message, text: Optional[str] = None):
 @bot.on.message(text=["/dice", "/dice <bet_str>"])
 async def dice_cmd(message: Message, bet_str: Optional[str] = None):
     if not await check_permission(message, "dice"): return
-    admin = db.get_admin_by_id(message.from_id); min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
+    admin = db.get_admin_by_id(message.from_id,message.peer_id); min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
     if not bet_str: return await message.answer(f"{EMOJI['error']} Укажите ставку! /dice <ставка>")
     try: bet = int(bet_str)
     except ValueError: return await message.answer(f"{EMOJI['error']} Ставка должна быть числом.")
@@ -1621,7 +1621,7 @@ async def dice_cmd(message: Message, bet_str: Optional[str] = None):
 @bot.on.message(text=["/slots", "/slots <bet_str>"])
 async def slots_cmd(message: Message, bet_str: Optional[str] = None):
     if not await check_permission(message, "slots"): return
-    admin = db.get_admin_by_id(message.from_id); min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
+    admin = db.get_admin_by_id(message.from_id,message.peer_id); min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
     if not bet_str: return await message.answer(f"{EMOJI['error']} Укажите ставку! /slots <ставка>")
     try: bet = int(bet_str)
     except ValueError: return await message.answer(f"{EMOJI['error']} Ставка должна быть числом.")
