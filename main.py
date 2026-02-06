@@ -42,8 +42,7 @@ def load_config():
         raise FileNotFoundError("Не найден файл конфигурации config.ini!")
     config.read(CONFIG_FILE, encoding='utf-8-sig')
 
-    vk_token = 'vk1.a.nnRvtzf347WUyW4wsSgCHD9jOCxlrRm94EOJdwwgfP8BJUnNAueqfsiBWcG5rE6DfIo9SdZFnZjI3bknV2yfK4V2q6W51dzy4-uOks1abVL0Ow68KNCBochT3lOxmDnzKuh-KqTGFppDhbZdj_-A0urde01dw2xmkQFtxT4XKEw12-4yavii8Yqv4URyOLXMVvrs28ci7jJMaOEvGaKE0A'
-    ADMIN_CHAT_ID = config.getint("VK", "admin_chat_id", fallback=0)
+    vk_token = config.get("VK", "token", fallback=None)
 
     if not ADMIN_CHAT_ID:
         logger.warning("ID чата для администраторов (admin_chat_id) не указан в config.ini. Система запросов будет отключена.")
@@ -187,17 +186,52 @@ class DatabaseManager:
         self.execute("UPDATE admins SET position = ? WHERE position = ? AND chat_id = ?", (new_name, old_name, chat_id), commit=True)
     
     def get_admin_by_id(self, user_id: int, chat_id: int) -> Optional[sqlite3.Row]:
-        return self.fetchone("SELECT * FROM admins WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-
+        # Этот метод возвращает админа независимо от статуса (нужен для проверок прав и т.д.)
+        return self.fetchone(
+            "SELECT * FROM admins WHERE user_id = ? AND chat_id = ?", 
+            (user_id, chat_id)
+        )
+    
     def get_admin_by_nickname(self, nickname: str, chat_id: int) -> Optional[sqlite3.Row]:
-        return self.fetchone("SELECT * FROM admins WHERE lower(nickname) = lower(?) AND chat_id = ?", (nickname, chat_id))
-
+        # Этот метод также возвращает админа независимо от статуса
+        return self.fetchone(
+            "SELECT * FROM admins WHERE lower(nickname) = lower(?) AND chat_id = ?", 
+            (nickname, chat_id)
+        )
+    
     def get_admins_by_nick_part(self, search_nick: str, chat_id: int) -> List[sqlite3.Row]:
-        return self.fetchall("SELECT * FROM admins WHERE nickname LIKE ? AND chat_id = ?", ('%' + search_nick + '%', chat_id))
+        # Для внутреннего использования (например, parse_target_and_args) возвращаем всех
+        return self.fetchall(
+            "SELECT * FROM admins WHERE nickname LIKE ? AND chat_id = ?", 
+            ('%' + search_nick + '%', chat_id)
+        )
+    
+    # Добавьте новый метод для поиска только активных админов по части ника
+    def get_active_admins_by_nick_part(self, search_nick: str, chat_id: int) -> List[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT * FROM admins WHERE nickname LIKE ? AND chat_id = ? AND (status IS NULL OR status != 'Снят')", 
+            ('%' + search_nick + '%', chat_id)
+        )
 
     def get_all_admins(self, chat_id: int) -> List[sqlite3.Row]:
-        return self.fetchall("SELECT * FROM admins WHERE chat_id = ? ORDER BY level DESC, nickname ASC", (chat_id,))
+        # Возвращаем только активных администраторов (status != 'Снят')
+        return self.fetchall(
+            "SELECT * FROM admins WHERE chat_id = ? AND (status IS NULL OR status != 'Снят') ORDER BY level DESC, nickname ASC", 
+            (chat_id,)
+        )
     
+    def get_active_admins(self, chat_id: int) -> List[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT * FROM admins WHERE chat_id = ? AND (status IS NULL OR status != 'Снят') ORDER BY level DESC, nickname ASC", 
+            (chat_id,)
+        )
+    
+    def get_all_admins_including_inactive(self, chat_id: int) -> List[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT * FROM admins WHERE chat_id = ? ORDER BY level DESC, nickname ASC", 
+            (chat_id,)
+        )
+
     def get_admin_bonus(self, user_id: int, chat_id: int) -> Optional[str]:
         row = self.fetchone("SELECT bonus FROM admins WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
         return row['bonus'] if row and row['bonus'] else None
@@ -226,16 +260,34 @@ class DatabaseManager:
 
     def reactivate_admin(self, user_id: int, chat_id: int):
         with self._get_connection() as con:
-            con.execute("UPDATE admins SET status = 'Активен' WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-            con.execute("DELETE FROM warnings WHERE admin_user_id = ? AND chat_id = ?", (user_id, chat_id))
-            con.execute("DELETE FROM reprimands WHERE admin_user_id = ? AND chat_id = ?", (user_id, chat_id))
+            con.execute(
+                "UPDATE admins SET status = 'Активен' WHERE user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
+            con.execute(
+                "DELETE FROM warnings WHERE admin_user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
+            con.execute(
+                "DELETE FROM reprimands WHERE admin_user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
             con.commit()
     
     def snyat_adm(self, user_id: int, chat_id: int):
         with self._get_connection() as con:
-            con.execute("UPDATE admins SET status = 'Снят' WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-            con.execute("DELETE FROM warnings WHERE admin_user_id = ? AND chat_id = ?", (user_id, chat_id))
-            con.execute("DELETE FROM reprimands WHERE admin_user_id = ? AND chat_id = ?", (user_id, chat_id))
+            con.execute(
+                "UPDATE admins SET status = 'Снят' WHERE user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
+            con.execute(
+                "DELETE FROM warnings WHERE admin_user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
+            con.execute(
+                "DELETE FROM reprimands WHERE admin_user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
             con.commit()
 
     def get_user_global_data(self, user_id: int) -> Optional[sqlite3.Row]:
@@ -732,56 +784,78 @@ async def ai_cmd(message: Message, text: Optional[str] = None):
             conversation_message_id=processing_message.conversation_message_id,
             message=f"{EMOJI['error']} Произошла непредвиденная ошибка при обработке вашего запроса."
         )
-@bot.on.message(text=["/profile", "/profile <text>"])
-async def profile_cmd(message: Message, text: Optional[str] = None):
+def format_profile(admin_local: sqlite3.Row, user_global: sqlite3.Row, chat_id: int) -> str:
+    added_by_admin = db.get_admin_by_id(admin_local['added_by'], chat_id)
+    added_by_name = added_by_admin['nickname'] if added_by_admin else "Неизвестно"
     
+    bonus = db.get_admin_bonus(admin_local['user_id'], chat_id)
+    bonus_display = bonus if bonus else "Нет"
     
-    admin_to_show = None
-    target_id = message.from_id
+    status_emoji = "✅" if admin_local.get('status') != 'Снят' else "❌"
+    status_text = admin_local.get('status', 'Активен')
     
-    if message.reply_message: 
-        target_id = message.reply_message.from_id
-    elif text:
-        parsed_id, parsed_admin, _ = await parse_target_and_args(message)
-        if parsed_admin:
-            target_id = parsed_admin['user_id']
-    
-    admin_to_show = db.get_admin_by_id(target_id, message.peer_id)
-    if not admin_to_show: 
-        return await message.answer(f"{EMOJI['error']} Пользователь не является администратором в этом чате!")
-
-    if not await check_permission(message, "profile"): return
-    
-    user_global_data = db.get_user_global_data(target_id)
-    
-    keyboard = Keyboard(inline=True).add(
-        Text("Последние действия", payload={"cmd": "plogs", "user_id": admin_to_show['user_id'], "chat_id": message.peer_id})
-    ).row().add(
-        Text("Активность", payload={"cmd": "activity", "user_id": admin_to_show['user_id'], "chat_id": message.peer_id})
-    )
-    
-    await message.answer(format_profile(admin_to_show, user_global_data, message.peer_id), keyboard=keyboard.get_json())
-
+    return (f"{EMOJI['admin']} Профиль администратора (в этом чате) {EMOJI['admin']}\n\n"
+            f"{EMOJI['user']} Ник: {admin_local['nickname']}\n"
+            f"{EMOJI['crown']} Должность: {admin_local['position']}\n"
+            f"{EMOJI['star']} Уровень: {admin_local['level']}\n"
+            f"{status_emoji} Статус: {status_text}\n"  # Добавлен статус с эмодзи
+            f"{EMOJI['money']} Глобальный баланс: {user_global['balance'] if user_global else 100} фишек\n"
+            f"{EMOJI['star']} Бонус: {bonus_display}\n"
+            f"{EMOJI['time']} Дата добавления (в этот чат): {admin_local['added_date']}\n"
+            f"{EMOJI['admin']} Добавил: {added_by_name}\n"
+            f"{EMOJI['warn']} Предупреждений (в этом чате): {db.get_warnings_count(admin_local['user_id'], chat_id)}/2\n"
+            f"{EMOJI['ban']} Выговоров (в этом чате): {db.get_reprimands_count(admin_local['user_id'], chat_id)}/3")
 
 
 @bot.on.message(text="/admins")
 async def admins_cmd(message: Message):
-    if not await check_permission(message, "admins"): return
-    all_admins = db.get_all_admins(message.peer_id)
-    if not all_admins: return await message.answer(f"{EMOJI['list']} Список администраторов этого чата пуст.")
-    admin_list = "\n".join(f"{i+1}. [id{a['user_id']}|{a['nickname']}] ({a['position']}, ур: {a['level']})" for i, a in enumerate(all_admins))
-    await message.answer(f"{EMOJI['list']} Администраторы этого чата:\n\n{admin_list}", disable_mentions=1)
+    if not await check_permission(message, "admins"): 
+        return
+    
+    # Используем метод для получения только активных админов
+    all_admins = db.get_active_admins(message.peer_id)
+    
+    if not all_admins: 
+        return await message.answer(f"{EMOJI['list']} В этом чате нет активных администраторов.")
+    
+    admin_list = "\n".join(
+        f"{i+1}. [id{a['user_id']}|{a['nickname']}] ({a['position']}, ур: {a['level']})" 
+        for i, a in enumerate(all_admins)
+    )
+    
+    # Добавляем информацию о снятых админах
+    all_admins_including_inactive = db.get_all_admins_including_inactive(message.peer_id)
+    
+    # Исправляем: используем a['status'] вместо a.get('status')
+    inactive_count = len([a for a in all_admins_including_inactive if a['status'] == 'Снят'])
+    
+    if inactive_count > 0:
+        admin_list += f"\n\n{EMOJI['info']} Снятых администраторов: {inactive_count}"
+    
+    await message.answer(f"{EMOJI['list']} Активные администраторы этого чата:\n\n{admin_list}", disable_mentions=1)
 
 @bot.on.message(text=[".adm", ".adm <search_nick>"])
 async def adm_search_cmd(message: Message, search_nick: Optional[str] = None):
-    if not await check_permission(message, "adm"): return
-    if not search_nick: return await message.answer(f"{EMOJI['error']} Неверный формат! Правильно: .adm <часть_ника>")
-    found_admins = db.get_admins_by_nick_part(search_nick, message.peer_id)
-    if not found_admins: return await message.answer(f"{EMOJI['error']} Администратор с ником, содержащим '{search_nick}', не найден в этом чате.")
+    if not await check_permission(message, "adm"): 
+        return
+    
+    if not search_nick: 
+        return await message.answer(f"{EMOJI['error']} Неверный формат! Правильно: .adm <часть_ника>")
+    
+    # Ищем только среди активных админов
+    found_admins = db.get_active_admins_by_nick_part(search_nick, message.peer_id)
+    
+    if not found_admins: 
+        return await message.answer(f"{EMOJI['error']} Активный администратор с ником, содержащим '{search_nick}', не найден в этом чате.")
+    
     if len(found_admins) == 1:
         admin = found_admins[0]
         return await message.answer(f"{EMOJI['success']} Найден: {admin['nickname']}\n{EMOJI['user']} ВК: https://vk.com/id{admin['user_id']}")
-    response_text = f"{EMOJI['warning']} Найдено несколько:\n\n" + "\n".join(f"{i}. {admin['nickname']} - https://vk.com/id{admin['user_id']}" for i, admin in enumerate(found_admins[:10], 1))
+    
+    response_text = f"{EMOJI['warning']} Найдено несколько активных администраторов:\n\n" + "\n".join(
+        f"{i}. {admin['nickname']} - https://vk.com/id{admin['user_id']}" 
+        for i, admin in enumerate(found_admins[:10], 1)
+    )
     await message.answer(response_text)
 
 # Система тегов (FAQ)
@@ -845,17 +919,44 @@ async def taglist_cmd(message: Message):
 # Команды администрирования
 @bot.on.message(text=["/newadmin", "/newadmin <text>"])
 async def newadmin_cmd(message: Message, text: Optional[str] = None):
-    if not await check_permission(message, "newadmin"): return
-    if not text or len(text.split(maxsplit=1)) < 2: return await message.answer(f"{EMOJI['error']} Формат: /newadmin @упом Ник")
+    if not await check_permission(message, "newadmin"): 
+        return
+    
+    if not text or len(text.split(maxsplit=1)) < 2: 
+        return await message.answer(f"{EMOJI['error']} Формат: /newadmin @упом Ник")
+    
     mention, nickname = text.split(maxsplit=1)
     user_id = parse_mention(mention)
-    if not user_id: return await message.answer(f"{EMOJI['error']} Укажите корректное упоминание!")
-    if db.get_admin_by_id(user_id, message.peer_id): return await message.answer(f"{EMOJI['error']} Этот пользователь уже является администратором в этом чате!")
     
-    db.add_admin(user_id, message.peer_id, nickname, message.from_id)
-    log_action(message.from_id, "добавил администратора", user_id, f"ник: {nickname} в чате {message.peer_id}")
-    db.add_structured_action(message.from_id, 'add_admin', user_id, details=f"chat_id:{message.peer_id}")
-    await message.answer(f"{EMOJI['success']} Администратор [id{user_id}|{nickname}] успешно добавлен в этом чате!")
+    if not user_id: 
+        return await message.answer(f"{EMOJI['error']} Укажите корректное упоминание!")
+    
+    # Проверяем, есть ли уже запись об этом админе (даже если снят)
+    existing_admin = db.get_admin_by_id(user_id, message.peer_id)
+    
+    if existing_admin:
+        if existing_admin['status'] == 'Снят':
+            # Восстанавливаем снятого администратора
+            db.reactivate_admin(user_id, message.peer_id)
+            
+            # Обновляем ник, если он изменился
+            if existing_admin['nickname'] != nickname:
+                db.update_admin(user_id, message.peer_id, 'nickname', nickname)
+                db.update_global_nickname(user_id, nickname)
+                log_action(message.from_id, "восстановил и обновил ник администратора", user_id, f"новый ник: {nickname} в чате {message.peer_id}")
+                await message.answer(f"{EMOJI['success']} Снятый администратор [id{user_id}|{nickname}] восстановлен! Ник обновлен.")
+            else:
+                log_action(message.from_id, "восстановил снятого администратора", user_id, f"в чате {message.peer_id}")
+                await message.answer(f"{EMOJI['success']} Снятый администратор [id{user_id}|{nickname}] восстановлен!")
+        else:
+            # Администратор уже активен
+            return await message.answer(f"{EMOJI['error']} Этот пользователь уже является активным администратором в этом чате!")
+    else:
+        # Создаем нового администратора
+        db.add_admin(user_id, message.peer_id, nickname, message.from_id)
+        log_action(message.from_id, "добавил администратора", user_id, f"ник: {nickname} в чате {message.peer_id}")
+        db.add_structured_action(message.from_id, 'add_admin', user_id, details=f"chat_id:{message.peer_id}")
+        await message.answer(f"{EMOJI['success']} Администратор [id{user_id}|{nickname}] успешно добавлен в этом чате!")
 
 @bot.on.message(text=["/createdj", "/createdj <name>"])
 async def createdj_cmd(message: Message, name: Optional[str] = None):
@@ -1029,14 +1130,30 @@ async def kick_cmd(message: Message, text: Optional[str] = None):
                              f"но при исключении из чата произошла неизвестная ошибка.")
 @bot.on.message(text=["/reactivate", "/reactivate <text>"])
 async def reactivate_cmd(message: Message, text: Optional[str] = None):
-    if not await check_permission(message, "reactivate"): return
+    if not await check_permission(message, "reactivate"): 
+        return
+    
     target_id, admin, _ = await parse_target_and_args(message)
-    if not admin: return await message.answer(f"{EMOJI['error']} Администратор не найден.")
-    if admin['status'] != "Снят": return await message.answer(f"{EMOJI['error']} Администратор не снят!")
-    db.reactivate_admin(admin['user_id'])
-    log_action(message.from_id, "восстановил администратора", admin['user_id'])
-    try: await vk_api.messages.send(user_id=admin['user_id'], message=f"{EMOJI['success']} Вы восстановлены!", random_id=0)
-    except Exception as e: logger.warning(f"Уведомление о восстановлении не отправлено: {e}")
+    
+    if not admin: 
+        return await message.answer(f"{EMOJI['error']} Администратор не найден.")
+    
+    if admin['status'] != "Снят": 
+        return await message.answer(f"{EMOJI['error']} Администратор не снят!")
+    
+    # Исправляем: передаем chat_id
+    db.reactivate_admin(admin['user_id'], message.peer_id)
+    log_action(message.from_id, "восстановил администратора", admin['user_id'], f"в чате {message.peer_id}")
+    
+    try: 
+        await vk_api.messages.send(
+            user_id=admin['user_id'], 
+            message=f"{EMOJI['success']} Вы восстановлены!", 
+            random_id=0
+        )
+    except Exception as e: 
+        logger.warning(f"Уведомление о восстановлении не отправлено: {e}")
+    
     await message.answer(f"{EMOJI['success']} Администратор [id{admin['user_id']}|{admin['nickname']}] восстановлен!")
 
 # Команды управления чатом
@@ -1845,6 +1962,42 @@ async def bonus_cmd(message: Message, text: Optional[str] = None):
     
     await message.answer(f"{EMOJI['success']} Бонус успешно выдан администратору {admin['nickname']}!\n"
                         f"{EMOJI['money']} Бонус: {bonus_text.strip()}")
+
+@bot.on.message(text=["/admins_all", "/all_admins"])
+async def admins_all_cmd(message: Message):
+    if not await check_permission(message, "admins"): 
+        return
+    
+    # Получаем всех админов включая снятых
+    all_admins = db.get_all_admins_including_inactive(message.peer_id)
+    
+    if not all_admins: 
+        return await message.answer(f"{EMOJI['list']} В базе данных этого чата нет администраторов.")
+    
+    # Разделяем активных и снятых
+    active_admins = []
+    inactive_admins = []
+    
+    for admin in all_admins:
+        # Исправляем: используем admin['status'] вместо admin.get('status')
+        if admin['status'] == 'Снят':
+            inactive_admins.append(admin)
+        else:
+            active_admins.append(admin)
+    
+    response = f"{EMOJI['list']} Все администраторы этого чата:\n\n"
+    
+    if active_admins:
+        response += f"{EMOJI['success']} Активные ({len(active_admins)}):\n"
+        for i, a in enumerate(active_admins, 1):
+            response += f"{i}. [id{a['user_id']}|{a['nickname']}] ({a['position']}, ур: {a['level']})\n"
+    
+    if inactive_admins:
+        response += f"\n{EMOJI['error']} Снятые ({len(inactive_admins)}):\n"
+        for i, a in enumerate(inactive_admins, 1):
+            response += f"{i}. [id{a['user_id']}|{a['nickname']}] ({a['position']}, ур: {a['level']}) - {a['status']}\n"
+    
+    await message.answer(response[:4096], disable_mentions=1)
 # Запуск бота
 def register_requestable_commands():
     COMMAND_HANDLERS.clear() 
