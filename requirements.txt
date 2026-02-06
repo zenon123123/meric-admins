@@ -1,5 +1,6 @@
-vkbottle==3.6.4
-pydantic==1.10.12
+# requirements.txt - стабильная версия для Python 3.11
+vkbottle==4.3.12
+pydantic==2.5.3
 pydantic_core==2.14.6
 aiohttp==3.9.1
 apscheduler==3.10.4
