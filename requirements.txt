@@ -1,4 +1,4 @@
-vkbottle==5.0.0
+vkbottle==4.6.2
 pydantic==1.10.18
 aiohttp==3.9.1
 apscheduler==3.10.4
