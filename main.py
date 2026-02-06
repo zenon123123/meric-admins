@@ -22,7 +22,7 @@ GEMINI_API_KEY = "AIzaSyB84kpkSxdAYfoZvIBSPQ9I2bncwSOabKc"
 
 pending_requests: Dict[str, Dict[str, Any]] = {}
 COMMAND_HANDLERS: Dict[str, callable] = {}
-ADMIN_CHAT_ID: int = 0
+ADMIN_CHAT_ID: int = 2000000002
 DEV_USER_ID = 676983356 # Замените на ваш ID
 
 def is_not_mute_stop_error(record):
@@ -42,8 +42,7 @@ def load_config():
         raise FileNotFoundError("Не найден файл конфигурации config.ini!")
     config.read(CONFIG_FILE, encoding='utf-8-sig')
 
-    vk_token = 'vk1.a.nnRvtzf347WUyW4wsSgCHD9jOCxlrRm94EOJdwwgfP8BJUnNAueqfsiBWcG5rE6DfIo9SdZFnZjI3bknV2yfK4V2q6W51dzy4-uOks1abVL0Ow68KNCBochT3lOxmDnzKuh-KqTGFppDhbZdj_-A0urde01dw2xmkQFtxT4XKEw12-4yavii8Yqv4URyOLXMVvrs28ci7jJMaOEvGaKE0A'
-    ADMIN_CHAT_ID = config.getint("VK", "admin_chat_id", fallback=0)
+    vk_token = config.get("VK", "token", fallback=None)
 
     if not ADMIN_CHAT_ID:
         logger.warning("ID чата для администраторов (admin_chat_id) не указан в config.ini. Система запросов будет отключена.")
@@ -785,36 +784,6 @@ async def ai_cmd(message: Message, text: Optional[str] = None):
             conversation_message_id=processing_message.conversation_message_id,
             message=f"{EMOJI['error']} Произошла непредвиденная ошибка при обработке вашего запроса."
         )
-
-@bot.on.message(text=["/profile", "/profile <text>"])
-async def profile_cmd(message: Message, text: Optional[str] = None):
-    admin_to_show = None
-    target_id = message.from_id
-    
-    if message.reply_message: 
-        target_id = message.reply_message.from_id
-    elif text:
-        parsed_id, parsed_admin, _ = await parse_target_and_args(message)
-        if parsed_admin:
-            target_id = parsed_admin['user_id']
-    
-    admin_to_show = db.get_admin_by_id(target_id, message.peer_id)
-    if not admin_to_show: 
-        return await message.answer(f"{EMOJI['error']} Пользователь не является администратором в этом чате!")
-
-    if not await check_permission(message, "profile"): 
-        return
-    
-    user_global_data = db.get_user_global_data(target_id)
-    
-    keyboard = Keyboard(inline=True).add(
-        Text("Последние действия", payload={"cmd": "plogs", "user_id": admin_to_show['user_id'], "chat_id": message.peer_id})
-    ).row().add(
-        Text("Активность", payload={"cmd": "activity", "user_id": admin_to_show['user_id'], "chat_id": message.peer_id})
-    )
-    
-    await message.answer(format_profile(admin_to_show, user_global_data, message.peer_id), keyboard=keyboard.get_json())
-
 def format_profile(admin_local: sqlite3.Row, user_global: sqlite3.Row, chat_id: int) -> str:
     added_by_admin = db.get_admin_by_id(admin_local['added_by'], chat_id)
     added_by_name = added_by_admin['nickname'] if added_by_admin else "Неизвестно"
@@ -837,86 +806,6 @@ def format_profile(admin_local: sqlite3.Row, user_global: sqlite3.Row, chat_id: 
             f"{EMOJI['warn']} Предупреждений (в этом чате): {db.get_warnings_count(admin_local['user_id'], chat_id)}/2\n"
             f"{EMOJI['ban']} Выговоров (в этом чате): {db.get_reprimands_count(admin_local['user_id'], chat_id)}/3")
 
-import json  # Добавьте этот импорт в начало файла
-
-# Обработчик для кнопки "Последние действия"
-@bot.on.message(payload_map={"cmd": "plogs"})
-async def handle_plogs_button(message: Message):
-    if not await check_permission(message, "plogs"): 
-        return
-    
-    try:
-        payload = message.payload
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        
-        target_id = int(payload["user_id"])
-        chat_id = int(payload["chat_id"])
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
-        return await message.answer(f"{EMOJI['error']} Некорректный или устаревший payload кнопки.")
-    
-    # Используем существующую функцию show_user_logs или создаем новую
-    await show_user_logs_inline(message, target_id, chat_id)
-
-# Обработчик для кнопки "Активность"
-@bot.on.message(payload_map={"cmd": "activity"})
-async def handle_activity_button(message: Message):
-    try:
-        payload = message.payload
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        
-        target_id = int(payload["user_id"])
-        chat_id = int(payload["chat_id"])
-        target_admin = db.get_admin_by_id(target_id, chat_id)
-        
-        if not target_admin: 
-            return await message.answer(f"{EMOJI['error']} Администратор не найден в указанном чате.")
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError): 
-        return await message.answer(f"{EMOJI['error']} Некорректный или устаревший payload кнопки.")
-    
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=7)
-    
-    msg_count = db.count_messages_for_user(target_id, start_date, end_date)
-    
-    # глобальная статистика
-    admins_added = db.count_actions_for_user(target_id, 'add_admin', start_date, end_date)
-    preds_issued = db.count_actions_for_user(target_id, 'issue_pred', start_date, end_date)
-    warns_issued = db.count_actions_for_user(target_id, 'issue_warn', start_date, end_date)
-    admins_kicked = db.count_actions_for_user(target_id, 'kick_admin', start_date, end_date)
-
-    response = (f"{EMOJI['activity']} Статистика {target_admin['nickname']} за 7 дней:\n\n"
-                f"{EMOJI['messages']} Сообщений отправлено (во всех чатах): {msg_count}\n"
-                f"{EMOJI['list']} Админов назначено (во всех чатах): {admins_added}\n"
-                f"{EMOJI['kick']} Админов снято (во всех чатах): {admins_kicked}\n"
-                f"{EMOJI['warn']} Предупреждений выдано (во всех чатах): {preds_issued}\n"
-                f"{EMOJI['ban']} Выговоров выдано (во всех чатах): {warns_issued}\n\n"
-                f"{EMOJI['info']} Примечание: Указанная статистика является приблизительной. При большой нагрузке некоторые сообщения могут не быть учтены в реальном времени, однако это происходит крайне редко. Наш бот старается обрабатывать каждое ваше сообщение.")
-    
-    await message.answer(response, disable_mentions=1)
-
-# Вспомогательная функция для показа логов
-async def show_user_logs_inline(message: Message, user_id: int, chat_id: int):
-    target_admin = db.get_admin_by_id(user_id, chat_id)
-    if not target_admin:
-        target_global = db.get_user_global_data(user_id)
-        target_nick = target_global['nickname'] if target_global else f"ID{user_id}"
-    else:
-        target_nick = target_admin['nickname']
-
-    try:
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            user_logs = [line.strip() for line in f if target_nick in line or f"[id{user_id}|" in line]
-    except Exception as e: 
-        return await message.answer(f"{EMOJI['error']} Не удалось прочитать файл логов: {e}")
-        
-    if not user_logs: 
-        return await message.answer(f"{EMOJI['info']} Не найдено действий для {target_nick}.")
-        
-    header = f"{EMOJI['list']} Последние 20 действий для {target_nick}:\n\n"
-    response_text = header + "\n".join(user_logs[-20:])
-    await message.answer(response_text[:4096])
 
 @bot.on.message(text="/admins")
 async def admins_cmd(message: Message):
