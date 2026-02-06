@@ -42,45 +42,21 @@ def load_config():
         raise FileNotFoundError("Не найден файл конфигурации config.ini!")
     config.read(CONFIG_FILE, encoding='utf-8-sig')
 
-    vk_token = config.get("VK", "token", fallback=None)
+    vk_token = 'vk1.a.nnRvtzf347WUyW4wsSgCHD9jOCxlrRm94EOJdwwgfP8BJUnNAueqfsiBWcG5rE6DfIo9SdZFnZjI3bknV2yfK4V2q6W51dzy4-uOks1abVL0Ow68KNCBochT3lOxmDnzKuh-KqTGFppDhbZdj_-A0urde01dw2xmkQFtxT4XKEw12-4yavii8Yqv4URyOLXMVvrs28ci7jJMaOEvGaKE0A'
     ADMIN_CHAT_ID = config.getint("VK", "admin_chat_id", fallback=0)
 
     if not ADMIN_CHAT_ID:
         logger.warning("ID чата для администраторов (admin_chat_id) не указан в config.ini. Система запросов будет отключена.")
 
     godmode_key = config.get("SECURITY", "godmode_key", fallback="default_key")
-    
-    # Исправляем обработку CMD_LEVELS с возможными запятыми
-    default_cmd_levels = {}
-    if config.has_section("CMD_LEVELS"):
-        for cmd, level_str in config.items("CMD_LEVELS"):
-            try:
-                # Убираем возможные пробелы и запятые в конце
-                level_str_clean = level_str.strip().rstrip(',')
-                level = int(level_str_clean)
-                default_cmd_levels[cmd] = level
-            except ValueError as e:
-                logger.warning(f"Неверное значение уровня для команды '{cmd}': '{level_str}'. Используется значение по умолчанию.")
-                # Можно установить значение по умолчанию для этой команды
-                # Например, для команды 'bonus' установим 4
-                if cmd in ["bonus", "unbonus"]:
-                    default_cmd_levels[cmd] = 4
-                elif cmd == "bonuslist":
-                    default_cmd_levels[cmd] = 0
-                else:
-                    default_cmd_levels[cmd] = 9  # Максимальный по умолчанию
-    
+    default_cmd_levels = {cmd: int(level) for cmd, level in config.items("CMD_LEVELS")}
     defaults = {
-        "plogs": 4, "giverub": 8, "mute": 3, "unmute": 3, "zov": 3, "pred": 2, "unpred": 2,
-        "warn": 3, "unwarn": 3, "addtag": 4, "deltag": 4, "tag": 0, "taglist": 0,
-        "setrules": 4, "rules": 0, "clear": 6, "setwelcome": 4, "setdj": 4, "msgcount": 4,
-        "editcmd": 8, "editcmd_global": 9, "newadmin": 4, "kick": 4, "setlvl": 5, "setnick": 4, "profile": 0, "admins": 0, "adm": 0,
-        "bal": 0, "daily": 0, "top": 0, "pay": 0, "dice": 0, "slots": 0, "bladd": 6, "blrem": 6, "bllist": 6, "logs": 5,
-        "createdj": 5, "deletedj": 5, "peremdj": 5, "ai": 0,
-        # Добавляем новые команды для системы бонусов
-        "bonus": 4,           # Уровень для выдачи/снятия бонуса
-        "unbonus": 4,         # Уровень для снятия бонуса
-        "bonuslist": 0        # Просмотр бонусов для всех
+    "plogs": 4, "giverub": 8, "mute": 3, "unmute": 3, "zov": 3, "pred": 2, "unpred": 2,
+    "warn": 3, "unwarn": 3, "addtag": 4, "deltag": 4, "tag": 0, "taglist": 0,
+    "setrules": 4, "rules": 0, "clear": 6, "setwelcome": 4, "setdj": 4, "msgcount": 4,
+    "editcmd": 8, "editcmd_global": 9, "newadmin": 4, "kick": 4, "setlvl": 5, "setnick": 4, "profile": 0, "admins": 0, "adm": 0,
+    "bal": 0, "daily": 0, "top": 0, "pay": 0, "dice": 0, "slots": 0, "bladd": 6, "blrem": 6, "bllist": 6, "logs": 5,
+    "createdj": 5, "deletedj": 5, "peremdj": 5, "ai": 0 , "bonus": 4, "unbonus": 4, "bonuslist": 0
     }
 
     for cmd, level in defaults.items():
@@ -785,6 +761,9 @@ async def profile_cmd(message: Message, text: Optional[str] = None):
     )
     
     await message.answer(format_profile(admin_to_show, user_global_data, message.peer_id), keyboard=keyboard.get_json())
+
+
+
 @bot.on.message(text="/admins")
 async def admins_cmd(message: Message):
     if not await check_permission(message, "admins"): return
@@ -1573,18 +1552,83 @@ async def top_cmd(message: Message):
     await message.answer(response)
 @bot.on.message(text=["/pay", "/pay <text>"])
 async def pay_cmd(message: Message, text: Optional[str] = None):
-    if not await check_permission(message, "pay"): return
-    receiver_id, receiver, amount_str = await parse_target_and_args(message)
-    if not receiver: return await message.answer(f"{EMOJI['error']} Получатель не найден. Ответьте на сообщение или используйте @упом/ник.")
-    if not amount_str: return await message.answer(f"{EMOJI['error']} Не указана сумма для перевода.")
-    try: amount = int(amount_str); assert amount > 0
-    except: return await message.answer(f"{EMOJI['error']} Сумма должна быть положительным числом.")
-    sender = db.get_admin_by_id(message.from_id)
-    if (sender['balance'] or 0) < amount: return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек! (Баланс: {sender['balance'] or 0})")
-    if receiver['user_id'] == sender['user_id']: return await message.answer(f"{EMOJI['error']} Нельзя перевести фишки самому себе.")
-    db.update_balance(sender['user_id'], -amount); db.update_balance(receiver['user_id'], amount)
-    log_action(sender['user_id'], "перевел фишки", receiver['user_id'], f"{amount} фишек")
-    await message.answer(f"{EMOJI['success']} Вы успешно перевели {amount} фишек игроку {receiver['nickname']}!")
+    if not await check_permission(message, "pay"): 
+        return
+    
+    if not text:
+        return await message.answer(f"{EMOJI['error']} Формат: /pay @упом/ник <сумма>\nПример: /pay @id676983356 100")
+    
+    # Парсим аргументы
+    target_id, target_admin, amount_str = await parse_target_and_args(message)
+    
+    if not target_id:
+        return await message.answer(f"{EMOJI['error']} Получатель не указан. Ответьте на сообщение или используйте @упом/ник.")
+    
+    if not amount_str:
+        return await message.answer(f"{EMOJI['error']} Не указана сумма для перевода.")
+    
+    try:
+        amount = int(amount_str)
+        if amount <= 0:
+            return await message.answer(f"{EMOJI['error']} Сумма должна быть положительным числом.")
+    except ValueError:
+        return await message.answer(f"{EMOJI['error']} Сумма должна быть числом.")
+    
+    # Проверяем, что не переводим самому себе
+    if target_id == message.from_id:
+        return await message.answer(f"{EMOJI['error']} Нельзя перевести фишки самому себе.")
+    
+    # Получаем баланс отправителя
+    sender_global = db.get_user_global_data(message.from_id)
+    if not sender_global:
+        # Создаем запись, если её нет
+        db.execute("INSERT OR IGNORE INTO users_global (user_id, balance) VALUES (?, 100)", (message.from_id,), commit=True)
+        sender_global = db.get_user_global_data(message.from_id)
+    
+    sender_balance = sender_global['balance']
+    
+    if sender_balance < amount:
+        return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек! (Баланс: {sender_balance})")
+    
+    # Проверяем, существует ли получатель в системе
+    receiver_global = db.get_user_global_data(target_id)
+    if not receiver_global:
+        # Создаем запись для получателя, если её нет
+        try:
+            user_info = (await vk_api.users.get(user_ids=[target_id]))[0]
+            nickname = f"{user_info.first_name} {user_info.last_name}"
+        except:
+            nickname = f"ID{target_id}"
+        
+        db.execute("INSERT OR IGNORE INTO users_global (user_id, nickname, balance) VALUES (?, ?, 100)", 
+                   (target_id, nickname), commit=True)
+        receiver_global = db.get_user_global_data(target_id)
+    
+    # Определяем ник получателя для сообщения
+    receiver_nickname = receiver_global['nickname'] if receiver_global['nickname'] else f"ID{target_id}"
+    
+    # Проверяем, есть ли получатель в админах этого чата (для более информативного сообщения)
+    receiver_admin = db.get_admin_by_id(target_id, message.peer_id)
+    if receiver_admin:
+        receiver_nickname = receiver_admin['nickname']
+    
+    # Выполняем перевод
+    db.update_balance(message.from_id, -amount)  # Списываем у отправителя
+    db.update_balance(target_id, amount)         # Зачисляем получателю
+    
+    log_action(message.from_id, "перевел фишки", target_id, f"{amount} фишек")
+    
+    # Получаем обновленные балансы для сообщения
+    new_sender_balance = sender_balance - amount
+    new_receiver_balance = receiver_global['balance'] + amount
+    
+    response = (f"{EMOJI['success']} Перевод успешно выполнен!\n\n"
+                f"{EMOJI['money']} Вы перевели: {amount} фишек\n"
+                f"{EMOJI['user']} Получатель: [id{target_id}|{receiver_nickname}]\n\n"
+                f"{EMOJI['info']} Ваш баланс: {new_sender_balance} фишек\n"
+                f"Баланс получателя: {new_receiver_balance} фишек")
+    
+    await message.answer(response)
 @bot.on.message(text=["/giverub", "/giverub <text>"])
 async def giverub_cmd(message: Message, text: Optional[str] = None):
     if not await check_permission(message, "giverub"): return
@@ -1599,46 +1643,84 @@ async def giverub_cmd(message: Message, text: Optional[str] = None):
 @bot.on.message(text=["/dice", "/dice <bet_str>"])
 async def dice_cmd(message: Message, bet_str: Optional[str] = None):
     if not await check_permission(message, "dice"): return
-    admin = db.get_admin_by_id(message.from_id,message.peer_id); min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
-    if not bet_str: return await message.answer(f"{EMOJI['error']} Укажите ставку! /dice <ставка>")
-    try: bet = int(bet_str)
-    except ValueError: return await message.answer(f"{EMOJI['error']} Ставка должна быть числом.")
-    if not (min_bet <= bet <= max_bet): return await message.answer(f"{EMOJI['error']} Ставка от {min_bet} до {max_bet} фишек.")
-    if (admin['balance'] or 0) < bet: return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек. (Баланс: {admin['balance'] or 0})")
+    
+    # Получаем данные пользователя из users_global
+    user_global = db.get_user_global_data(message.from_id)
+    if not user_global:
+        return await message.answer(f"{EMOJI['error']} Ошибка получения данных пользователя.")
+    
+    min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
+    user_balance = user_global['balance']
+    
+    if not bet_str: 
+        return await message.answer(f"{EMOJI['error']} Укажите ставку! /dice <ставка>")
+    
+    try: 
+        bet = int(bet_str)
+    except ValueError: 
+        return await message.answer(f"{EMOJI['error']} Ставка должна быть числом.")
+    
+    if not (min_bet <= bet <= max_bet): 
+        return await message.answer(f"{EMOJI['error']} Ставка от {min_bet} до {max_bet} фишек.")
+    
+    if user_balance < bet: 
+        return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек. (Баланс: {user_balance})")
+    
     player_roll, bot_roll = random.randint(2, 12), random.randint(2, 12)
     result_text = f"{EMOJI['game_die']} Ваши кости: {player_roll}\n{EMOJI['game_die']} Кости бота: {bot_roll}\n\n"
+    
     if player_roll > bot_roll:
         db.update_balance(message.from_id, bet)
         log_action(message.from_id, "выиграл в кости", details=f"ставка {bet}, +{bet} фишек")
-        await message.answer(result_text + f"{EMOJI['success']} Победа! Выигрыш: {bet} фишек.\n{EMOJI['money']} Баланс: {(admin['balance'] or 0) + bet}")
+        await message.answer(result_text + f"{EMOJI['success']} Победа! Выигрыш: {bet} фишек.\n{EMOJI['money']} Баланс: {user_balance + bet}")
     elif bot_roll > player_roll:
         db.update_balance(message.from_id, -bet)
         log_action(message.from_id, "проиграл в кости", details=f"ставка {bet}, -{bet} фишек")
-        await message.answer(result_text + f"{EMOJI['error']} Проигрыш! Потеряно: {bet} фишек.\n{EMOJI['money']} Баланс: {(admin['balance'] or 0) - bet}")
+        await message.answer(result_text + f"{EMOJI['error']} Проигрыш! Потеряно: {bet} фишек.\n{EMOJI['money']} Баланс: {user_balance - bet}")
     else:
         log_action(message.from_id, "сыграл вничью в кости", details=f"ставка {bet}")
         await message.answer(result_text + f"{EMOJI['info']} Ничья! Ваша ставка возвращена.")
 @bot.on.message(text=["/slots", "/slots <bet_str>"])
 async def slots_cmd(message: Message, bet_str: Optional[str] = None):
     if not await check_permission(message, "slots"): return
-    admin = db.get_admin_by_id(message.from_id,message.peer_id); min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
-    if not bet_str: return await message.answer(f"{EMOJI['error']} Укажите ставку! /slots <ставка>")
-    try: bet = int(bet_str)
-    except ValueError: return await message.answer(f"{EMOJI['error']} Ставка должна быть числом.")
-    if not (min_bet <= bet <= max_bet): return await message.answer(f"{EMOJI['error']} Ставка от {min_bet} до {max_bet} фишек.")
-    if (admin['balance'] or 0) < bet: return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек. (Баланс: {admin['balance'] or 0})")
+    
+    # Получаем данные пользователя из users_global
+    user_global = db.get_user_global_data(message.from_id)
+    if not user_global:
+        return await message.answer(f"{EMOJI['error']} Ошибка получения данных пользователя.")
+    
+    min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
+    user_balance = user_global['balance']
+    
+    if not bet_str: 
+        return await message.answer(f"{EMOJI['error']} Укажите ставку! /slots <ставка>")
+    
+    try: 
+        bet = int(bet_str)
+    except ValueError: 
+        return await message.answer(f"{EMOJI['error']} Ставка должна быть числом.")
+    
+    if not (min_bet <= bet <= max_bet): 
+        return await message.answer(f"{EMOJI['error']} Ставка от {min_bet} до {max_bet} фишек.")
+    
+    if user_balance < bet: 
+        return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек. (Баланс: {user_balance})")
+    
     reels = ['🍒', '🍋', '🔔', '💎', '💰', '🎰']; weights = [25, 25, 20, 15, 10, 5] 
     roll = random.choices(reels, weights=weights, k=3); result_text = f"{EMOJI['slot_machine']} | {' '.join(roll)} | {EMOJI['slot_machine']}\n\n"; change = -bet
+    
     if roll[0] == roll[1] == roll[2]:
         winnings = bet * (50 if roll[0] == '🎰' else 10); change += winnings
         result_text += f"{'🎉 ДЖЕКПОТ! 🎉' if roll[0] == '🎰' else EMOJI['success'] + ' Три в ряд!'}\nВыигрыш: {winnings} фишек!"
     elif roll[0] == roll[1] or roll[1] == roll[2]:
         winnings = bet * 2; change += winnings
         result_text += f"{EMOJI['success']} Два в ряд! Выигрыш: {winnings} фишек!"
-    else: result_text += f"{EMOJI['error']} Вы проиграли. Попробуйте еще раз!"
+    else: 
+        result_text += f"{EMOJI['error']} Вы проиграли. Попробуйте еще раз!"
+    
     db.update_balance(message.from_id, change)
     log_action(message.from_id, "сыграл в слоты", details=f"ставка {bet}, изменение баланса: {change}")
-    await message.answer(result_text + f"\n{EMOJI['money']} Ваш новый баланс: {(admin['balance'] or 0) + change}")
+    await message.answer(result_text + f"\n{EMOJI['money']} Ваш новый баланс: {user_balance + change}")
 @bot.on.message(text=["/zov", "/zov <text>"])
 async def zov_cmd(message: Message, text: Optional[str] = None):
     if not await check_permission(message, "zov"): return
