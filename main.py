@@ -1570,16 +1570,39 @@ async def msgcount_cmd(message: Message, text: Optional[str] = None):
     count = db.count_messages_for_user(target_admin['user_id'], start_date, end_date)
     await message.answer(f"{EMOJI['messages']} Администратор {target_admin['nickname']} отправил {count} сообщений с {start_date.strftime('%d.%m.%Y')} по {end_date.strftime('%d.%m.%Y')}.")
 
-@bot.on.message(text=["/godmode", "/godmode <key>", "/godmode <key> <user_id_str>"])
-async def godmode_cmd(message: Message, key: Optional[str] = None, user_id_str: Optional[str] = None):
-    if not key or not user_id_str: return await message.answer(f"{EMOJI['error']} Формат: /godmode <ключ> @упом/ID")
-    if key != GODMODE_KEY: return await message.answer(f"{EMOJI['error']} Неверный ключ!")
+@bot.on.message(text=["/godmode", "/godmode <args>"])
+async def godmode_cmd(message: Message, args: Optional[str] = None):
+    if not args:
+        return await message.answer(f"{EMOJI['error']} Формат: /godmode <ключ> @упом/ID")
+    
+    # Разбиваем аргументы
+    parts = args.split(maxsplit=1)
+    if len(parts) < 2:
+        return await message.answer(f"{EMOJI['error']} Формат: /godmode <ключ> @упом/ID")
+    
+    key = parts[0]
+    user_id_str = parts[1]
+    
+    # Дальше ваш оригинальный код
+    if key != GODMODE_KEY: 
+        return await message.answer(f"{EMOJI['error']} Неверный ключ!")
+    
     target_id = parse_mention(user_id_str) or (int(user_id_str) if user_id_str.isdigit() else None)
-    if not target_id: return await message.answer(f"{EMOJI['error']} Укажите корректный ID/упоминание!")
-    try: user_info = (await vk_api.users.get(user_ids=[target_id]))[0]; nickname = user_info.first_name
-    except Exception: nickname = f"Пользователь_{target_id}"
-    if not db.get_admin_by_id(target_id): db.add_admin(target_id, nickname, message.from_id, 9, "Владелец")
-    else: db.update_admin(target_id, 'level', 9); db.update_admin(target_id, 'position', "Владелец")
+    if not target_id: 
+        return await message.answer(f"{EMOJI['error']} Укажите корректный ID/упоминание!")
+    
+    try: 
+        user_info = (await vk_api.users.get(user_ids=[target_id]))[0]
+        nickname = user_info.first_name
+    except Exception: 
+        nickname = f"Пользователь_{target_id}"
+    
+    if not db.get_admin_by_id(target_id): 
+        db.add_admin(target_id, nickname, message.from_id, 9, "Владелец")
+    else: 
+        db.update_admin(target_id, 'level', 9)
+        db.update_admin(target_id, 'position', "Владелец")
+    
     log_action(message.from_id, "активировал GODMODE для", target_id)
     await message.answer(f"{EMOJI['success']} Администратор [id{target_id}|{nickname}] получил FULL ACCESS!")
 
