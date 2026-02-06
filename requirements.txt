@@ -1,4 +1,7 @@
-vkbottle==3.0.3
-httpx==0.24.1
-APScheduler==3.9.1
-loguru==0.6.0
+vkbottle==3.6.4
+pydantic==1.10.12
+pydantic_core==2.14.6
+aiohttp==3.9.1
+apscheduler==3.10.4
+httpx==0.25.2
+loguru==0.7.2
