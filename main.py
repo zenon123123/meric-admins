@@ -21,7 +21,7 @@ GEMINI_API_KEY = "AIzaSyB84kpkSxdAYfoZvIBSPQ9I2bncwSOabKc"
 
 pending_requests: Dict[str, Dict[str, Any]] = {}
 COMMAND_HANDLERS: Dict[str, callable] = {}
-ADMIN_CHAT_ID: int = 0
+ADMIN_CHAT_ID = 2000000011
 DEV_USER_ID = 676983356 # Замените на ваш ID
 
 def is_not_mute_stop_error(record):
