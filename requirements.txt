@@ -1,5 +1,5 @@
-vkbottle==3.0.0
-pydantic==2.5.0
-apscheduler==3.10.4
-httpx==0.26.0
-loguru==0.7.2
+vkbottle
+pydantic
+apscheduler
+httpx
+loguru
