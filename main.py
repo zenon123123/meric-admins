@@ -1,7 +1,4 @@
 import warnings
-warnings.filterwarnings("ignore", category=UserWarning, module="pydantic.*")
-warnings.filterwarnings("ignore", message=".*pydantic.error_wrappers.*")
-
 from vkbottle.bot import Bot, Message
 from vkbottle import Keyboard, Text, VKAPIError
 from vkbottle.api import API
@@ -20,6 +17,9 @@ import uuid
 import functools
 from loguru import logger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic.*")
+warnings.filterwarnings("ignore", message=".*pydantic.error_wrappers.*")
 
 GEMINI_API_KEY = "AIzaSyB84kpkSxdAYfoZvIBSPQ9I2bncwSOabKc"
 
