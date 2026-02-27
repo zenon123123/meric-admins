@@ -1,7 +1,8 @@
 from vkbottle.bot import Bot, Message
-from vkbottle import Keyboard, Text, BaseMiddleware, VKAPIError
-from vkbottle.dispatch.rules.base import PayloadContainsRule
+from vkbottle import Keyboard, Text, VKAPIError
+# from vkbottle.dispatch.rules import PayloadContainsRule  # Измененный импорт
 from vkbottle.api import API
+from vkbottle.dispatch.middlewares.abc import BaseMiddleware  # Измененный импорт для Middleware
 from typing import Optional, Dict, List, Any, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,10 +22,10 @@ GEMINI_API_KEY = "AIzaSyB84kpkSxdAYfoZvIBSPQ9I2bncwSOabKc"
 
 pending_requests: Dict[str, Dict[str, Any]] = {}
 COMMAND_HANDLERS: Dict[str, callable] = {}
-ADMIN_CHAT_ID = 2000000011
+ADMIN_CHAT_ID: int = 2000000002
 DEV_USER_ID = 676983356 # Замените на ваш ID
 
-def is_not_mute_stop_error(record): 
+def is_not_mute_stop_error(record):
     return "pre returned error User is muted" not in record["message"]
 
 logger.remove()
@@ -42,24 +43,36 @@ def load_config():
     config.read(CONFIG_FILE, encoding='utf-8-sig')
 
     vk_token = config.get("VK", "token", fallback=None)
-    ADMIN_CHAT_ID = config.getint("VK", "admin_chat_id", fallback=0)
 
     if not ADMIN_CHAT_ID:
         logger.warning("ID чата для администраторов (admin_chat_id) не указан в config.ini. Система запросов будет отключена.")
 
     godmode_key = config.get("SECURITY", "godmode_key", fallback="default_key")
-    default_cmd_levels = {cmd: int(level) for cmd, level in config.items("CMD_LEVELS")}
+    
+    # Исправление: обработка значений с возможными запятыми
+    default_cmd_levels = {}
+    if config.has_section("CMD_LEVELS"):
+        for cmd, level in config.items("CMD_LEVELS"):
+            try:
+                # Удаляем пробелы и запятые, оставляя только цифры
+                cleaned_level = level.strip().rstrip(',')
+                default_cmd_levels[cmd] = int(cleaned_level)
+            except ValueError:
+                logger.warning(f"Некорректный уровень для команды {cmd}: '{level}'. Используется значение по умолчанию.")
+                default_cmd_levels[cmd] = None  # Будет заменено значением по умолчанию ниже
+    
     defaults = {
-    "plogs": 4, "giverub": 8, "mute": 3, "unmute": 3, "zov": 3, "pred": 2, "unpred": 2,
-    "warn": 3, "unwarn": 3, "addtag": 4, "deltag": 4, "tag": 0, "taglist": 0,
-    "setrules": 4, "rules": 0, "clear": 6, "setwelcome": 4, "setdj": 4, "msgcount": 4,
-    "editcmd": 8, "editcmd_global": 9, "newadmin": 4, "kick": 4, "setlvl": 5, "setnick": 4, "profile": 0, "admins": 0, "adm": 0,
-    "bal": 0, "daily": 0, "top": 0, "pay": 0, "dice": 0, "slots": 0, "bladd": 6, "blrem": 6, "bllist": 6, "logs": 5,
-    "createdj": 5, "deletedj": 5, "peremdj": 5, "ai": 0 
+        "plogs": 4, "giverub": 8, "mute": 3, "unmute": 3, "zov": 3, "pred": 2, "unpred": 2,
+        "warn": 3, "unwarn": 3, "addtag": 4, "deltag": 4, "tag": 0, "taglist": 0,
+        "setrules": 4, "rules": 0, "clear": 6, "setwelcome": 4, "setdj": 4, "msgcount": 4,
+        "editcmd": 8, "editcmd_global": 9, "newadmin": 4, "kick": 4, "setlvl": 5, "setnick": 4, 
+        "profile": 0, "admins": 0, "adm": 0, "bal": 0, "daily": 0, "top": 0, "pay": 0, 
+        "dice": 0, "slots": 0, "bladd": 6, "blrem": 6, "bllist": 6, "logs": 5,
+        "createdj": 5, "deletedj": 5, "peremdj": 5, "ai": 0, "bonus": 4, "unbonus": 4, "bonuslist": 0
     }
 
     for cmd, level in defaults.items():
-        if cmd not in default_cmd_levels:
+        if cmd not in default_cmd_levels or default_cmd_levels[cmd] is None:
             default_cmd_levels[cmd] = level
 
     if not vk_token or vk_token == "ВАШ_VK_TOKEN":
@@ -74,7 +87,7 @@ def load_config():
     return vk_token, godmode_key, default_cmd_levels, casino_config
 
 class DatabaseManager:
-    VALID_ADMIN_COLUMNS = ["nickname", "position", "level", "status", "forum_link"]
+    VALID_ADMIN_COLUMNS = ["nickname", "position", "level", "status", "bonus"]
     def __init__(self, db_path): 
         self.db_path = db_path
 
@@ -90,10 +103,17 @@ class DatabaseManager:
                     position TEXT,
                     added_date TEXT,
                     status TEXT,
-                    forum_link TEXT,
+                    bonus TEXT,
                     PRIMARY KEY(user_id, chat_id)
                 )
             """)
+            try:
+                # Пробуем выполнить запрос с полем bonus
+                con.execute("SELECT bonus FROM admins LIMIT 1")
+            except sqlite3.OperationalError:
+                 # Если столбца нет, добавляем его
+                logger.info("Добавляем столбец 'bonus' в таблицу 'admins'...")
+                con.execute("ALTER TABLE admins ADD COLUMN bonus TEXT")
             con.execute("""
                 CREATE TABLE IF NOT EXISTS users_global (
                     user_id INTEGER PRIMARY KEY,
@@ -111,6 +131,7 @@ class DatabaseManager:
                     UNIQUE(chat_id, name)
                 )
             """)
+            
             con.execute("""CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, content TEXT NOT NULL, creator_id INTEGER NOT NULL, chat_id INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(name, chat_id))""")
             con.execute("""CREATE TABLE IF NOT EXISTS warnings (id INTEGER PRIMARY KEY AUTOINCREMENT, admin_user_id INTEGER, issuer_user_id INTEGER, reason TEXT, date TEXT, chat_id INTEGER NOT NULL)""")
             con.execute("""CREATE TABLE IF NOT EXISTS reprimands (id INTEGER PRIMARY KEY AUTOINCREMENT, admin_user_id INTEGER, issuer_user_id INTEGER, reason TEXT, date TEXT, chat_id INTEGER NOT NULL)""")
@@ -178,17 +199,63 @@ class DatabaseManager:
         self.execute("UPDATE admins SET position = ? WHERE position = ? AND chat_id = ?", (new_name, old_name, chat_id), commit=True)
     
     def get_admin_by_id(self, user_id: int, chat_id: int) -> Optional[sqlite3.Row]:
-        return self.fetchone("SELECT * FROM admins WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-
+        # Этот метод возвращает админа независимо от статуса (нужен для проверок прав и т.д.)
+        return self.fetchone(
+            "SELECT * FROM admins WHERE user_id = ? AND chat_id = ?", 
+            (user_id, chat_id)
+        )
+    
     def get_admin_by_nickname(self, nickname: str, chat_id: int) -> Optional[sqlite3.Row]:
-        return self.fetchone("SELECT * FROM admins WHERE lower(nickname) = lower(?) AND chat_id = ?", (nickname, chat_id))
-
+        # Этот метод также возвращает админа независимо от статуса
+        return self.fetchone(
+            "SELECT * FROM admins WHERE lower(nickname) = lower(?) AND chat_id = ?", 
+            (nickname, chat_id)
+        )
+    
     def get_admins_by_nick_part(self, search_nick: str, chat_id: int) -> List[sqlite3.Row]:
-        return self.fetchall("SELECT * FROM admins WHERE nickname LIKE ? AND chat_id = ?", ('%' + search_nick + '%', chat_id))
+        # Для внутреннего использования (например, parse_target_and_args) возвращаем всех
+        return self.fetchall(
+            "SELECT * FROM admins WHERE nickname LIKE ? AND chat_id = ?", 
+            ('%' + search_nick + '%', chat_id)
+        )
+    
+    # Добавьте новый метод для поиска только активных админов по части ника
+    def get_active_admins_by_nick_part(self, search_nick: str, chat_id: int) -> List[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT * FROM admins WHERE nickname LIKE ? AND chat_id = ? AND (status IS NULL OR status != 'Снят')", 
+            ('%' + search_nick + '%', chat_id)
+        )
 
     def get_all_admins(self, chat_id: int) -> List[sqlite3.Row]:
-        return self.fetchall("SELECT * FROM admins WHERE chat_id = ? ORDER BY level DESC, nickname ASC", (chat_id,))
+        # Возвращаем только активных администраторов (status != 'Снят')
+        return self.fetchall(
+            "SELECT * FROM admins WHERE chat_id = ? AND (status IS NULL OR status != 'Снят') ORDER BY level DESC, nickname ASC", 
+            (chat_id,)
+        )
+    
+    def get_active_admins(self, chat_id: int) -> List[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT * FROM admins WHERE chat_id = ? AND (status IS NULL OR status != 'Снят') ORDER BY level DESC, nickname ASC", 
+            (chat_id,)
+        )
+    
+    def get_all_admins_including_inactive(self, chat_id: int) -> List[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT * FROM admins WHERE chat_id = ? ORDER BY level DESC, nickname ASC", 
+            (chat_id,)
+        )
 
+    def get_admin_bonus(self, user_id: int, chat_id: int) -> Optional[str]:
+        row = self.fetchone("SELECT bonus FROM admins WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        return row['bonus'] if row and row['bonus'] else None
+    
+    def set_admin_bonus(self, user_id: int, chat_id: int, bonus_text: str):
+        self.execute("UPDATE admins SET bonus = ? WHERE user_id = ? AND chat_id = ?", 
+                     (bonus_text, user_id, chat_id), commit=True)
+    
+    def remove_admin_bonus(self, user_id: int, chat_id: int):
+        self.execute("UPDATE admins SET bonus = NULL WHERE user_id = ? AND chat_id = ?", 
+                     (user_id, chat_id), commit=True)
     def add_admin(self, user_id: int, chat_id: int, nickname: str, added_by: int, level=1, position="Без должности"):
         date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.execute("INSERT OR REPLACE INTO admins (user_id, chat_id, nickname, added_by, level, position, added_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'Активен')",
@@ -206,16 +273,34 @@ class DatabaseManager:
 
     def reactivate_admin(self, user_id: int, chat_id: int):
         with self._get_connection() as con:
-            con.execute("UPDATE admins SET status = 'Активен' WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-            con.execute("DELETE FROM warnings WHERE admin_user_id = ? AND chat_id = ?", (user_id, chat_id))
-            con.execute("DELETE FROM reprimands WHERE admin_user_id = ? AND chat_id = ?", (user_id, chat_id))
+            con.execute(
+                "UPDATE admins SET status = 'Активен' WHERE user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
+            con.execute(
+                "DELETE FROM warnings WHERE admin_user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
+            con.execute(
+                "DELETE FROM reprimands WHERE admin_user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
             con.commit()
     
     def snyat_adm(self, user_id: int, chat_id: int):
         with self._get_connection() as con:
-            con.execute("UPDATE admins SET status = 'Снят' WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-            con.execute("DELETE FROM warnings WHERE admin_user_id = ? AND chat_id = ?", (user_id, chat_id))
-            con.execute("DELETE FROM reprimands WHERE admin_user_id = ? AND chat_id = ?", (user_id, chat_id))
+            con.execute(
+                "UPDATE admins SET status = 'Снят' WHERE user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
+            con.execute(
+                "DELETE FROM warnings WHERE admin_user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
+            con.execute(
+                "DELETE FROM reprimands WHERE admin_user_id = ? AND chat_id = ?", 
+                (user_id, chat_id)
+            )
             con.commit()
 
     def get_user_global_data(self, user_id: int) -> Optional[sqlite3.Row]:
@@ -414,11 +499,17 @@ def parse_duration(time_str: str) -> Optional[timedelta]:
 def format_profile(admin_local: sqlite3.Row, user_global: sqlite3.Row, chat_id: int) -> str:
     added_by_admin = db.get_admin_by_id(admin_local['added_by'], chat_id)
     added_by_name = added_by_admin['nickname'] if added_by_admin else "Неизвестно"
+    
+    # Получаем бонус
+    bonus = db.get_admin_bonus(admin_local['user_id'], chat_id)
+    bonus_display = bonus if bonus else "Нет"
+    
     return (f"{EMOJI['admin']} Профиль администратора (в этом чате) {EMOJI['admin']}\n\n"
             f"{EMOJI['user']} Ник: {admin_local['nickname']}\n"
             f"{EMOJI['crown']} Должность: {admin_local['position']}\n"
             f"{EMOJI['star']} Уровень: {admin_local['level']}\n"
             f"{EMOJI['money']} Глобальный баланс: {user_global['balance'] if user_global else 100} фишек\n"
+            f"{EMOJI['star']} Бонус: {bonus_display}\n"  # Добавлена строка с бонусом
             f"{EMOJI['time']} Дата добавления (в этот чат): {admin_local['added_date']}\n"
             f"{EMOJI['admin']} Добавил: {added_by_name}\n"
             f"{EMOJI['info']} Статус: {admin_local['status']}\n"
@@ -475,38 +566,38 @@ async def check_permission(message: Message, command_name: str) -> bool:
     return False
 
 # Middleware и Планировщик
-class MuteCheckMiddleware(BaseMiddleware[Message]):
-    async def pre(self):
-        if self.event.from_id < 0 or not self.event.peer_id: 
+class MuteCheckMiddleware(BaseMiddleware):
+    async def pre(self, message: Message):
+        if message.from_id < 0 or not message.peer_id: 
             return
 
-        issuer_admin_local = db.get_admin_by_id(self.event.from_id, self.event.peer_id)
-        issuer_global_data = db.get_user_global_data(self.event.from_id)
+        issuer_admin_local = db.get_admin_by_id(message.from_id, message.peer_id)
+        issuer_global_data = db.get_user_global_data(message.from_id)
 
         if issuer_admin_local and (issuer_admin_local['level'] >= 8 or (issuer_global_data and issuer_global_data['dev_mode'])):
             return
 
-        mute_info = db.get_active_mute(self.event.from_id, self.event.peer_id)
+        mute_info = db.get_active_mute(message.from_id, message.peer_id)
         if mute_info:
             try:
-                await vk_api.messages.delete(peer_id=self.event.peer_id, cmids=[self.event.conversation_message_id], delete_for_all=1)
+                await vk_api.messages.delete(peer_id=message.peer_id, cmids=[message.conversation_message_id], delete_for_all=1)
             except VKAPIError as e:
                 if e.code == 925:
-                    logger.warning(f"Не удалось удалить сообщение от {self.event.from_id}: Бот не админ.")
+                    logger.warning(f"Не удалось удалить сообщение от {message.from_id}: Бот не админ.")
                 else:
-                    logger.error(f"Ошибка API при удалении сообщения от {self.event.from_id}: {e}")
+                    logger.error(f"Ошибка API при удалении сообщения от {message.from_id}: {e}")
             except Exception as e:
-                logger.error(f"Не удалось удалить сообщение от замученного {self.event.from_id}: {e}")
+                logger.error(f"Не удалось удалить сообщение от замученного {message.from_id}: {e}")
             self.stop("User is muted.")
 
-class MessageLoggingMiddleware(BaseMiddleware[Message]):
-    async def pre(self):
-        if self.event.from_id > 0 and self.event.peer_id:
-            try: db.add_message(self.event.from_id, self.event.peer_id, datetime.now())
+class MessageLoggingMiddleware(BaseMiddleware):
+    async def pre(self, message: Message):
+        if message.from_id > 0 and message.peer_id:
+            try: db.add_message(message.from_id, message.peer_id, datetime.now())
             except Exception as e: logger.error(f"Ошибка при логировании сообщения: {e}")
 
-bot.labeler.message_view.register_middleware(MuteCheckMiddleware)
-bot.labeler.message_view.register_middleware(MessageLoggingMiddleware)
+# bot.labeler.message_view.register_middleware(MuteCheckMiddleware)
+# bot.labeler.message_view.register_middleware(MessageLoggingMiddleware)
 
 async def check_expired_mutes():
     expired_mutes = db.get_expired_mutes()
@@ -526,6 +617,7 @@ async def startup_task():
     scheduler.add_job(check_expired_mutes, 'interval', seconds=30)
     scheduler.start()
     logger.info("Планировщик задач запущен.")
+'''
 # Система запросов
 @bot.on.message(PayloadContainsRule({"action": "req_cancel"}))
 async def handle_request_cancel(message: Message):
@@ -568,7 +660,7 @@ async def process_decision(approver_id: int, request_id: str, decision: str):
         await bot.api.messages.send(peer_id=ADMIN_CHAT_ID, message=f"❌ Запрос `{request_id}` на `{command_text}` отклонен [id{approver_id}|{approver_admin['nickname']}]", random_id=0)
         log_action(approver_id, f"отклонил запрос от {request_data['requester_nick']}", details=f"ID {request_id}: {command_text}")
     if request_id in pending_requests: del pending_requests[request_id]
-
+'''
 # Основные команды
 @bot.on.message(text="/help")
 async def help_cmd(message: Message):
@@ -595,6 +687,9 @@ async def help_cmd(message: Message):
 /setdj @упом/ник [должность] - Установить должность.
 /setnick @упом/ник Новый_ник - Изменить ник.
 /setlvl @упом/ник уровень - Изменить уровень (0-9).
+/bonus @упом/ник <текст> - Выдать бонус администратору.  
+/unbonus @упом/ник - Снять бонус с администратора.      
+/bonuslist - Список всех бонусов в чате.                  
 /editcmd <команда> <уровень> - Изменить доступ к команде.
 
 {EMOJI['ban']} Наказания
@@ -631,59 +726,149 @@ async def help_cmd(message: Message):
 @bot.on.message(text="/test")
 async def test_cmd(message: Message): await message.answer(f"{EMOJI['success']} Бот работает! Peer ID: {message.peer_id}")
 
-@bot.on.message(text=["/profile", "/profile <text>"])
-async def profile_cmd(message: Message, text: Optional[str] = None):
-    target_id = message.from_id  # По умолчанию показываем профиль вызвавшего
-    
-    # Если есть ответ на сообщение
-    if message.reply_message:
-        target_id = message.reply_message.from_id
-    # Если указан текст (ник или упоминание)
-    elif text:
-        # Пробуем найти администратора по нику или упоминанию
-        parsed_id, parsed_admin, _ = await parse_target_and_args(message)
-        if parsed_admin:
-            target_id = parsed_admin['user_id']
-    
-    # Проверяем права на выполнение команды
-    if not await check_permission(message, "profile"):
+@bot.on.message(text=["/ai", "/ai <text>"])
+async def ai_cmd(message: Message, text: Optional[str] = None):
+    if not await check_permission(message, "ai"):
         return
+    if not text:
+        return await message.answer(f"{EMOJI['error']} Пожалуйста, введите ваш вопрос после команды.\nПример: /ai Что такое черная дыра?")
+
+    api_url = ""
+
+    payload = {
+        "contents": [{"parts": [{"text": text}]}]
+    }
     
-    # Получаем данные администратора
-    admin_to_show = db.get_admin_by_id(target_id, message.peer_id)
-    if not admin_to_show:
-        return await message.answer(f"{EMOJI['error']} Пользователь не является администратором в этом чате!")
+    headers = {
+        'Content-Type': 'application/json',
+        'X-goog-api-key': GEMINI_API_KEY
+    }
+
+    processing_message = await message.answer("🧠 Думаю...")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(api_url, json=payload, headers=headers)
+            response.raise_for_status()  
+            
+            data = response.json()
+            
+            if 'candidates' in data and data['candidates']:
+                content = data['candidates'][0].get('content', {})
+                if 'parts' in content and content['parts']:
+                    result_text = content['parts'][0].get('text', '')
+                    if result_text:
+                        final_response = f"🤖 Ответ от Gemini:\n\n{result_text}"
+                        await bot.api.messages.edit(
+                            peer_id=message.peer_id,
+                            conversation_message_id=processing_message.conversation_message_id,
+                            message=final_response[:4096] 
+                        )
+                        return
+            
+            await bot.api.messages.edit(
+                peer_id=message.peer_id,
+                conversation_message_id=processing_message.conversation_message_id,
+                message=f"{EMOJI['warning']} Не удалось получить ответ. Возможно, ваш запрос был заблокирован из-за правил безопасности."
+            )
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"AI command failed with HTTP status error: {e.response.status_code} - {e.response.text}")
+        try:
+            error_details = e.response.json().get("error", {}).get("message", "Нет деталей")
+        except:
+            error_details = e.response.text
+        await bot.api.messages.edit(
+            peer_id=message.peer_id,
+            conversation_message_id=processing_message.conversation_message_id,
+            message=f"{EMOJI['error']} Ошибка API ({e.response.status_code}): {error_details}"
+        )
+    except httpx.RequestError as e:
+        logger.error(f"AI command failed with request error: {e}")
+        await bot.api.messages.edit(
+            peer_id=message.peer_id,
+            conversation_message_id=processing_message.conversation_message_id,
+            message=f"{EMOJI['error']} Произошла ошибка сети при обращении к AI. Попробуйте позже."
+        )
+    except Exception as e:
+        logger.critical(f"An unexpected error occurred in AI command: {e}")
+        await bot.api.messages.edit(
+            peer_id=message.peer_id,
+            conversation_message_id=processing_message.conversation_message_id,
+            message=f"{EMOJI['error']} Произошла непредвиденная ошибка при обработке вашего запроса."
+        )
+def format_profile(admin_local: sqlite3.Row, user_global: sqlite3.Row, chat_id: int) -> str:
+    added_by_admin = db.get_admin_by_id(admin_local['added_by'], chat_id)
+    added_by_name = added_by_admin['nickname'] if added_by_admin else "Неизвестно"
     
-    # Получаем глобальные данные пользователя
-    user_global_data = db.get_user_global_data(target_id)
+    bonus = db.get_admin_bonus(admin_local['user_id'], chat_id)
+    bonus_display = bonus if bonus else "Нет"
     
-    # Создаем клавиатуру
-    keyboard = Keyboard(inline=True).add(
-        Text("Последние действия", payload={"cmd": "plogs", "user_id": admin_to_show['user_id'], "chat_id": message.peer_id})
-    ).row().add(
-        Text("Активность", payload={"cmd": "activity", "user_id": admin_to_show['user_id'], "chat_id": message.peer_id})
-    )
+    status_emoji = "✅" if admin_local.get('status') != 'Снят' else "❌"
+    status_text = admin_local.get('status', 'Активен')
     
-    # Отправляем профиль
-    await message.answer(format_profile(admin_to_show, user_global_data, message.peer_id), keyboard=keyboard.get_json())
+    return (f"{EMOJI['admin']} Профиль администратора (в этом чате) {EMOJI['admin']}\n\n"
+            f"{EMOJI['user']} Ник: {admin_local['nickname']}\n"
+            f"{EMOJI['crown']} Должность: {admin_local['position']}\n"
+            f"{EMOJI['star']} Уровень: {admin_local['level']}\n"
+            f"{status_emoji} Статус: {status_text}\n"  # Добавлен статус с эмодзи
+            f"{EMOJI['money']} Глобальный баланс: {user_global['balance'] if user_global else 100} фишек\n"
+            f"{EMOJI['star']} Бонус: {bonus_display}\n"
+            f"{EMOJI['time']} Дата добавления (в этот чат): {admin_local['added_date']}\n"
+            f"{EMOJI['admin']} Добавил: {added_by_name}\n"
+            f"{EMOJI['warn']} Предупреждений (в этом чате): {db.get_warnings_count(admin_local['user_id'], chat_id)}/2\n"
+            f"{EMOJI['ban']} Выговоров (в этом чате): {db.get_reprimands_count(admin_local['user_id'], chat_id)}/3")
+
+
 @bot.on.message(text="/admins")
 async def admins_cmd(message: Message):
-    if not await check_permission(message, "admins"): return
-    all_admins = db.get_all_admins(message.peer_id)
-    if not all_admins: return await message.answer(f"{EMOJI['list']} Список администраторов этого чата пуст.")
-    admin_list = "\n".join(f"{i+1}. [id{a['user_id']}|{a['nickname']}] ({a['position']}, ур: {a['level']})" for i, a in enumerate(all_admins))
-    await message.answer(f"{EMOJI['list']} Администраторы этого чата:\n\n{admin_list}", disable_mentions=1)
+    if not await check_permission(message, "admins"): 
+        return
+    
+    # Используем метод для получения только активных админов
+    all_admins = db.get_active_admins(message.peer_id)
+    
+    if not all_admins: 
+        return await message.answer(f"{EMOJI['list']} В этом чате нет активных администраторов.")
+    
+    admin_list = "\n".join(
+        f"{i+1}. [id{a['user_id']}|{a['nickname']}] ({a['position']}, ур: {a['level']})" 
+        for i, a in enumerate(all_admins)
+    )
+    
+    # Добавляем информацию о снятых админах
+    all_admins_including_inactive = db.get_all_admins_including_inactive(message.peer_id)
+    
+    # Исправляем: используем a['status'] вместо a.get('status')
+    inactive_count = len([a for a in all_admins_including_inactive if a['status'] == 'Снят'])
+    
+    if inactive_count > 0:
+        admin_list += f"\n\n{EMOJI['info']} Снятых администраторов: {inactive_count}"
+    
+    await message.answer(f"{EMOJI['list']} Активные администраторы этого чата:\n\n{admin_list}", disable_mentions=1)
 
 @bot.on.message(text=[".adm", ".adm <search_nick>"])
 async def adm_search_cmd(message: Message, search_nick: Optional[str] = None):
-    if not await check_permission(message, "adm"): return
-    if not search_nick: return await message.answer(f"{EMOJI['error']} Неверный формат! Правильно: .adm <часть_ника>")
-    found_admins = db.get_admins_by_nick_part(search_nick, message.peer_id)
-    if not found_admins: return await message.answer(f"{EMOJI['error']} Администратор с ником, содержащим '{search_nick}', не найден в этом чате.")
+    if not await check_permission(message, "adm"): 
+        return
+    
+    if not search_nick: 
+        return await message.answer(f"{EMOJI['error']} Неверный формат! Правильно: .adm <часть_ника>")
+    
+    # Ищем только среди активных админов
+    found_admins = db.get_active_admins_by_nick_part(search_nick, message.peer_id)
+    
+    if not found_admins: 
+        return await message.answer(f"{EMOJI['error']} Активный администратор с ником, содержащим '{search_nick}', не найден в этом чате.")
+    
     if len(found_admins) == 1:
         admin = found_admins[0]
         return await message.answer(f"{EMOJI['success']} Найден: {admin['nickname']}\n{EMOJI['user']} ВК: https://vk.com/id{admin['user_id']}")
-    response_text = f"{EMOJI['warning']} Найдено несколько:\n\n" + "\n".join(f"{i}. {admin['nickname']} - https://vk.com/id{admin['user_id']}" for i, admin in enumerate(found_admins[:10], 1))
+    
+    response_text = f"{EMOJI['warning']} Найдено несколько активных администраторов:\n\n" + "\n".join(
+        f"{i}. {admin['nickname']} - https://vk.com/id{admin['user_id']}" 
+        for i, admin in enumerate(found_admins[:10], 1)
+    )
     await message.answer(response_text)
 
 # Система тегов (FAQ)
@@ -747,17 +932,44 @@ async def taglist_cmd(message: Message):
 # Команды администрирования
 @bot.on.message(text=["/newadmin", "/newadmin <text>"])
 async def newadmin_cmd(message: Message, text: Optional[str] = None):
-    if not await check_permission(message, "newadmin"): return
-    if not text or len(text.split(maxsplit=1)) < 2: return await message.answer(f"{EMOJI['error']} Формат: /newadmin @упом Ник")
+    if not await check_permission(message, "newadmin"): 
+        return
+    
+    if not text or len(text.split(maxsplit=1)) < 2: 
+        return await message.answer(f"{EMOJI['error']} Формат: /newadmin @упом Ник")
+    
     mention, nickname = text.split(maxsplit=1)
     user_id = parse_mention(mention)
-    if not user_id: return await message.answer(f"{EMOJI['error']} Укажите корректное упоминание!")
-    if db.get_admin_by_id(user_id, message.peer_id): return await message.answer(f"{EMOJI['error']} Этот пользователь уже является администратором в этом чате!")
     
-    db.add_admin(user_id, message.peer_id, nickname, message.from_id)
-    log_action(message.from_id, "добавил администратора", user_id, f"ник: {nickname} в чате {message.peer_id}")
-    db.add_structured_action(message.from_id, 'add_admin', user_id, details=f"chat_id:{message.peer_id}")
-    await message.answer(f"{EMOJI['success']} Администратор [id{user_id}|{nickname}] успешно добавлен в этом чате!")
+    if not user_id: 
+        return await message.answer(f"{EMOJI['error']} Укажите корректное упоминание!")
+    
+    # Проверяем, есть ли уже запись об этом админе (даже если снят)
+    existing_admin = db.get_admin_by_id(user_id, message.peer_id)
+    
+    if existing_admin:
+        if existing_admin['status'] == 'Снят':
+            # Восстанавливаем снятого администратора
+            db.reactivate_admin(user_id, message.peer_id)
+            
+            # Обновляем ник, если он изменился
+            if existing_admin['nickname'] != nickname:
+                db.update_admin(user_id, message.peer_id, 'nickname', nickname)
+                db.update_global_nickname(user_id, nickname)
+                log_action(message.from_id, "восстановил и обновил ник администратора", user_id, f"новый ник: {nickname} в чате {message.peer_id}")
+                await message.answer(f"{EMOJI['success']} Снятый администратор [id{user_id}|{nickname}] восстановлен! Ник обновлен.")
+            else:
+                log_action(message.from_id, "восстановил снятого администратора", user_id, f"в чате {message.peer_id}")
+                await message.answer(f"{EMOJI['success']} Снятый администратор [id{user_id}|{nickname}] восстановлен!")
+        else:
+            # Администратор уже активен
+            return await message.answer(f"{EMOJI['error']} Этот пользователь уже является активным администратором в этом чате!")
+    else:
+        # Создаем нового администратора
+        db.add_admin(user_id, message.peer_id, nickname, message.from_id)
+        log_action(message.from_id, "добавил администратора", user_id, f"ник: {nickname} в чате {message.peer_id}")
+        db.add_structured_action(message.from_id, 'add_admin', user_id, details=f"chat_id:{message.peer_id}")
+        await message.answer(f"{EMOJI['success']} Администратор [id{user_id}|{nickname}] успешно добавлен в этом чате!")
 
 @bot.on.message(text=["/createdj", "/createdj <name>"])
 async def createdj_cmd(message: Message, name: Optional[str] = None):
@@ -931,14 +1143,30 @@ async def kick_cmd(message: Message, text: Optional[str] = None):
                              f"но при исключении из чата произошла неизвестная ошибка.")
 @bot.on.message(text=["/reactivate", "/reactivate <text>"])
 async def reactivate_cmd(message: Message, text: Optional[str] = None):
-    if not await check_permission(message, "reactivate"): return
+    if not await check_permission(message, "reactivate"): 
+        return
+    
     target_id, admin, _ = await parse_target_and_args(message)
-    if not admin: return await message.answer(f"{EMOJI['error']} Администратор не найден.")
-    if admin['status'] != "Снят": return await message.answer(f"{EMOJI['error']} Администратор не снят!")
-    db.reactivate_admin(admin['user_id'])
-    log_action(message.from_id, "восстановил администратора", admin['user_id'])
-    try: await vk_api.messages.send(user_id=admin['user_id'], message=f"{EMOJI['success']} Вы восстановлены!", random_id=0)
-    except Exception as e: logger.warning(f"Уведомление о восстановлении не отправлено: {e}")
+    
+    if not admin: 
+        return await message.answer(f"{EMOJI['error']} Администратор не найден.")
+    
+    if admin['status'] != "Снят": 
+        return await message.answer(f"{EMOJI['error']} Администратор не снят!")
+    
+    # Исправляем: передаем chat_id
+    db.reactivate_admin(admin['user_id'], message.peer_id)
+    log_action(message.from_id, "восстановил администратора", admin['user_id'], f"в чате {message.peer_id}")
+    
+    try: 
+        await vk_api.messages.send(
+            user_id=admin['user_id'], 
+            message=f"{EMOJI['success']} Вы восстановлены!", 
+            random_id=0
+        )
+    except Exception as e: 
+        logger.warning(f"Уведомление о восстановлении не отправлено: {e}")
+    
     await message.answer(f"{EMOJI['success']} Администратор [id{admin['user_id']}|{admin['nickname']}] восстановлен!")
 
 # Команды управления чатом
@@ -1200,7 +1428,7 @@ async def blacklist_list_cmd(message: Message):
         added_by_info = f"[id{added_by_admin['user_id']}|{added_by_admin['nickname']}]" if added_by_admin else "Неизвестно"
         text += (f"{i}. [id{entry['user_id']}|{user_name}]\n - Причина: {entry['reason']}\n - Добавил: {added_by_info}\n\n")
     await message.answer(text)
-
+'''
 @bot.on.message(PayloadContainsRule({"cmd": "plogs"}))
 async def profile_logs_handler(message: Message):
     if not await check_permission(message, "plogs"): return
@@ -1211,9 +1439,8 @@ async def profile_logs_handler(message: Message):
         chat_id = int(payload["chat_id"])
     except (ValueError, KeyError, TypeError):
         return await message.answer(f"{EMOJI['error']} Некорректный или устаревший payload кнопки.")
-
+    
     await show_user_logs(message, target_id, chat_id)
-
 @bot.on.message(text=["/logs", "/logs <text>"])
 async def logs_cmd(message: Message, text: Optional[str] = None):
     if not await check_permission(message, "logs"): return
@@ -1285,7 +1512,7 @@ async def show_activity_summary(message: Message):
                 f"{EMOJI['info']} Примечание: Указанная статистика является приблизительной. При большой нагрузке некоторые сообщения могут не быть учтены в реальном времени, однако это происходит крайне редко. Наш бот старается обрабатывать каждое ваше сообщение.")
     
     await message.answer(response, disable_mentions=1)
-
+'''
 @bot.on.chat_message(action=["chat_leave_user", "chat_kick_user"])
 async def handle_user_departure(message: Message):
     logger.info(f"Сработало событие ухода из чата: {message.action.type}. Peer ID: {message.peer_id}")
@@ -1356,20 +1583,42 @@ async def msgcount_cmd(message: Message, text: Optional[str] = None):
     count = db.count_messages_for_user(target_admin['user_id'], start_date, end_date)
     await message.answer(f"{EMOJI['messages']} Администратор {target_admin['nickname']} отправил {count} сообщений с {start_date.strftime('%d.%m.%Y')} по {end_date.strftime('%d.%m.%Y')}.")
 
-@bot.on.message(text=["/godmode", "/godmode <key>", "/godmode <key> <user_id_str>"])
-async def godmode_cmd(message: Message, key: Optional[str] = None, user_id_str: Optional[str] = None):
-    if not key or not user_id_str: return await message.answer(f"{EMOJI['error']} Формат: /godmode <ключ> @упом/ID")
-    if key != GODMODE_KEY: return await message.answer(f"{EMOJI['error']} Неверный ключ!")
+@bot.on.message(text=["/godmode", "/godmode <args>"])
+async def godmode_cmd(message: Message, args: Optional[str] = None):
+    if not args:
+        return await message.answer(f"{EMOJI['error']} Формат: /godmode <ключ> @упом/ID")
+    
+    # Разбиваем аргументы
+    parts = args.split(maxsplit=1)
+    if len(parts) < 2:
+        return await message.answer(f"{EMOJI['error']} Формат: /godmode <ключ> @упом/ID")
+    
+    key = parts[0]
+    user_id_str = parts[1]
+    
+    # Дальше ваш оригинальный код
+    if key != GODMODE_KEY: 
+        return await message.answer(f"{EMOJI['error']} Неверный ключ!")
+    
     target_id = parse_mention(user_id_str) or (int(user_id_str) if user_id_str.isdigit() else None)
-    if not target_id: return await message.answer(f"{EMOJI['error']} Укажите корректный ID/упоминание!")
-    try: user_info = (await vk_api.users.get(user_ids=[target_id]))[0]; nickname = user_info.first_name
-    except Exception: nickname = f"Пользователь_{target_id}"
-    chat_id = message.peer_id
-    if not db.get_admin_by_id(target_id,chat_id): db.add_admin(target_id, nickname, message.from_id, 9, "Владелец")
-    else: db.update_admin(target_id, 'level', 9); db.update_admin(target_id, 'position', "Владелец")
+    if not target_id: 
+        return await message.answer(f"{EMOJI['error']} Укажите корректный ID/упоминание!")
+    
+    try: 
+        user_info = (await vk_api.users.get(user_ids=[target_id]))[0]
+        nickname = user_info.first_name
+    except Exception: 
+        nickname = f"Пользователь_{target_id}"
+    
+    if not db.get_admin_by_id(target_id): 
+        db.add_admin(target_id, message.peer_id, nickname, message.from_id, 9, "Владелец")
+    else: 
+        db.update_admin(target_id, 'level', 9)
+        db.update_admin(target_id, 'position', "Владелец")
+    
     log_action(message.from_id, "активировал GODMODE для", target_id)
     await message.answer(f"{EMOJI['success']} Администратор [id{target_id}|{nickname}] получил FULL ACCESS!")
-
+    
 @bot.on.message(text=[".dev <mode>", ".dev"])
 async def dev_mode_cmd(message: Message, mode: Optional[str] = None):
     if message.from_id != DEV_USER_ID: 
@@ -1456,18 +1705,83 @@ async def top_cmd(message: Message):
     await message.answer(response)
 @bot.on.message(text=["/pay", "/pay <text>"])
 async def pay_cmd(message: Message, text: Optional[str] = None):
-    if not await check_permission(message, "pay"): return
-    receiver_id, receiver, amount_str = await parse_target_and_args(message)
-    if not receiver: return await message.answer(f"{EMOJI['error']} Получатель не найден. Ответьте на сообщение или используйте @упом/ник.")
-    if not amount_str: return await message.answer(f"{EMOJI['error']} Не указана сумма для перевода.")
-    try: amount = int(amount_str); assert amount > 0
-    except: return await message.answer(f"{EMOJI['error']} Сумма должна быть положительным числом.")
-    sender = db.get_admin_by_id(message.from_id)
-    if (sender['balance'] or 0) < amount: return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек! (Баланс: {sender['balance'] or 0})")
-    if receiver['user_id'] == sender['user_id']: return await message.answer(f"{EMOJI['error']} Нельзя перевести фишки самому себе.")
-    db.update_balance(sender['user_id'], -amount); db.update_balance(receiver['user_id'], amount)
-    log_action(sender['user_id'], "перевел фишки", receiver['user_id'], f"{amount} фишек")
-    await message.answer(f"{EMOJI['success']} Вы успешно перевели {amount} фишек игроку {receiver['nickname']}!")
+    if not await check_permission(message, "pay"): 
+        return
+    
+    if not text:
+        return await message.answer(f"{EMOJI['error']} Формат: /pay @упом/ник <сумма>\nПример: /pay @id676983356 100")
+    
+    # Парсим аргументы
+    target_id, target_admin, amount_str = await parse_target_and_args(message)
+    
+    if not target_id:
+        return await message.answer(f"{EMOJI['error']} Получатель не указан. Ответьте на сообщение или используйте @упом/ник.")
+    
+    if not amount_str:
+        return await message.answer(f"{EMOJI['error']} Не указана сумма для перевода.")
+    
+    try:
+        amount = int(amount_str)
+        if amount <= 0:
+            return await message.answer(f"{EMOJI['error']} Сумма должна быть положительным числом.")
+    except ValueError:
+        return await message.answer(f"{EMOJI['error']} Сумма должна быть числом.")
+    
+    # Проверяем, что не переводим самому себе
+    if target_id == message.from_id:
+        return await message.answer(f"{EMOJI['error']} Нельзя перевести фишки самому себе.")
+    
+    # Получаем баланс отправителя
+    sender_global = db.get_user_global_data(message.from_id)
+    if not sender_global:
+        # Создаем запись, если её нет
+        db.execute("INSERT OR IGNORE INTO users_global (user_id, balance) VALUES (?, 100)", (message.from_id,), commit=True)
+        sender_global = db.get_user_global_data(message.from_id)
+    
+    sender_balance = sender_global['balance']
+    
+    if sender_balance < amount:
+        return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек! (Баланс: {sender_balance})")
+    
+    # Проверяем, существует ли получатель в системе
+    receiver_global = db.get_user_global_data(target_id)
+    if not receiver_global:
+        # Создаем запись для получателя, если её нет
+        try:
+            user_info = (await vk_api.users.get(user_ids=[target_id]))[0]
+            nickname = f"{user_info.first_name} {user_info.last_name}"
+        except:
+            nickname = f"ID{target_id}"
+        
+        db.execute("INSERT OR IGNORE INTO users_global (user_id, nickname, balance) VALUES (?, ?, 100)", 
+                   (target_id, nickname), commit=True)
+        receiver_global = db.get_user_global_data(target_id)
+    
+    # Определяем ник получателя для сообщения
+    receiver_nickname = receiver_global['nickname'] if receiver_global['nickname'] else f"ID{target_id}"
+    
+    # Проверяем, есть ли получатель в админах этого чата (для более информативного сообщения)
+    receiver_admin = db.get_admin_by_id(target_id, message.peer_id)
+    if receiver_admin:
+        receiver_nickname = receiver_admin['nickname']
+    
+    # Выполняем перевод
+    db.update_balance(message.from_id, -amount)  # Списываем у отправителя
+    db.update_balance(target_id, amount)         # Зачисляем получателю
+    
+    log_action(message.from_id, "перевел фишки", target_id, f"{amount} фишек")
+    
+    # Получаем обновленные балансы для сообщения
+    new_sender_balance = sender_balance - amount
+    new_receiver_balance = receiver_global['balance'] + amount
+    
+    response = (f"{EMOJI['success']} Перевод успешно выполнен!\n\n"
+                f"{EMOJI['money']} Вы перевели: {amount} фишек\n"
+                f"{EMOJI['user']} Получатель: [id{target_id}|{receiver_nickname}]\n\n"
+                f"{EMOJI['info']} Ваш баланс: {new_sender_balance} фишек\n"
+                f"Баланс получателя: {new_receiver_balance} фишек")
+    
+    await message.answer(response)
 @bot.on.message(text=["/giverub", "/giverub <text>"])
 async def giverub_cmd(message: Message, text: Optional[str] = None):
     if not await check_permission(message, "giverub"): return
@@ -1482,46 +1796,84 @@ async def giverub_cmd(message: Message, text: Optional[str] = None):
 @bot.on.message(text=["/dice", "/dice <bet_str>"])
 async def dice_cmd(message: Message, bet_str: Optional[str] = None):
     if not await check_permission(message, "dice"): return
-    admin = db.get_admin_by_id(message.from_id); min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
-    if not bet_str: return await message.answer(f"{EMOJI['error']} Укажите ставку! /dice <ставка>")
-    try: bet = int(bet_str)
-    except ValueError: return await message.answer(f"{EMOJI['error']} Ставка должна быть числом.")
-    if not (min_bet <= bet <= max_bet): return await message.answer(f"{EMOJI['error']} Ставка от {min_bet} до {max_bet} фишек.")
-    if (admin['balance'] or 0) < bet: return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек. (Баланс: {admin['balance'] or 0})")
+    
+    # Получаем данные пользователя из users_global
+    user_global = db.get_user_global_data(message.from_id)
+    if not user_global:
+        return await message.answer(f"{EMOJI['error']} Ошибка получения данных пользователя.")
+    
+    min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
+    user_balance = user_global['balance']
+    
+    if not bet_str: 
+        return await message.answer(f"{EMOJI['error']} Укажите ставку! /dice <ставка>")
+    
+    try: 
+        bet = int(bet_str)
+    except ValueError: 
+        return await message.answer(f"{EMOJI['error']} Ставка должна быть числом.")
+    
+    if not (min_bet <= bet <= max_bet): 
+        return await message.answer(f"{EMOJI['error']} Ставка от {min_bet} до {max_bet} фишек.")
+    
+    if user_balance < bet: 
+        return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек. (Баланс: {user_balance})")
+    
     player_roll, bot_roll = random.randint(2, 12), random.randint(2, 12)
     result_text = f"{EMOJI['game_die']} Ваши кости: {player_roll}\n{EMOJI['game_die']} Кости бота: {bot_roll}\n\n"
+    
     if player_roll > bot_roll:
         db.update_balance(message.from_id, bet)
         log_action(message.from_id, "выиграл в кости", details=f"ставка {bet}, +{bet} фишек")
-        await message.answer(result_text + f"{EMOJI['success']} Победа! Выигрыш: {bet} фишек.\n{EMOJI['money']} Баланс: {(admin['balance'] or 0) + bet}")
+        await message.answer(result_text + f"{EMOJI['success']} Победа! Выигрыш: {bet} фишек.\n{EMOJI['money']} Баланс: {user_balance + bet}")
     elif bot_roll > player_roll:
         db.update_balance(message.from_id, -bet)
         log_action(message.from_id, "проиграл в кости", details=f"ставка {bet}, -{bet} фишек")
-        await message.answer(result_text + f"{EMOJI['error']} Проигрыш! Потеряно: {bet} фишек.\n{EMOJI['money']} Баланс: {(admin['balance'] or 0) - bet}")
+        await message.answer(result_text + f"{EMOJI['error']} Проигрыш! Потеряно: {bet} фишек.\n{EMOJI['money']} Баланс: {user_balance - bet}")
     else:
         log_action(message.from_id, "сыграл вничью в кости", details=f"ставка {bet}")
         await message.answer(result_text + f"{EMOJI['info']} Ничья! Ваша ставка возвращена.")
 @bot.on.message(text=["/slots", "/slots <bet_str>"])
 async def slots_cmd(message: Message, bet_str: Optional[str] = None):
     if not await check_permission(message, "slots"): return
-    admin = db.get_admin_by_id(message.from_id); min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
-    if not bet_str: return await message.answer(f"{EMOJI['error']} Укажите ставку! /slots <ставка>")
-    try: bet = int(bet_str)
-    except ValueError: return await message.answer(f"{EMOJI['error']} Ставка должна быть числом.")
-    if not (min_bet <= bet <= max_bet): return await message.answer(f"{EMOJI['error']} Ставка от {min_bet} до {max_bet} фишек.")
-    if (admin['balance'] or 0) < bet: return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек. (Баланс: {admin['balance'] or 0})")
+    
+    # Получаем данные пользователя из users_global
+    user_global = db.get_user_global_data(message.from_id)
+    if not user_global:
+        return await message.answer(f"{EMOJI['error']} Ошибка получения данных пользователя.")
+    
+    min_bet, max_bet = CASINO_CONFIG['min_bet'], CASINO_CONFIG['max_bet']
+    user_balance = user_global['balance']
+    
+    if not bet_str: 
+        return await message.answer(f"{EMOJI['error']} Укажите ставку! /slots <ставка>")
+    
+    try: 
+        bet = int(bet_str)
+    except ValueError: 
+        return await message.answer(f"{EMOJI['error']} Ставка должна быть числом.")
+    
+    if not (min_bet <= bet <= max_bet): 
+        return await message.answer(f"{EMOJI['error']} Ставка от {min_bet} до {max_bet} фишек.")
+    
+    if user_balance < bet: 
+        return await message.answer(f"{EMOJI['error']} У вас недостаточно фишек. (Баланс: {user_balance})")
+    
     reels = ['🍒', '🍋', '🔔', '💎', '💰', '🎰']; weights = [25, 25, 20, 15, 10, 5] 
     roll = random.choices(reels, weights=weights, k=3); result_text = f"{EMOJI['slot_machine']} | {' '.join(roll)} | {EMOJI['slot_machine']}\n\n"; change = -bet
+    
     if roll[0] == roll[1] == roll[2]:
         winnings = bet * (50 if roll[0] == '🎰' else 10); change += winnings
         result_text += f"{'🎉 ДЖЕКПОТ! 🎉' if roll[0] == '🎰' else EMOJI['success'] + ' Три в ряд!'}\nВыигрыш: {winnings} фишек!"
     elif roll[0] == roll[1] or roll[1] == roll[2]:
         winnings = bet * 2; change += winnings
         result_text += f"{EMOJI['success']} Два в ряд! Выигрыш: {winnings} фишек!"
-    else: result_text += f"{EMOJI['error']} Вы проиграли. Попробуйте еще раз!"
+    else: 
+        result_text += f"{EMOJI['error']} Вы проиграли. Попробуйте еще раз!"
+    
     db.update_balance(message.from_id, change)
     log_action(message.from_id, "сыграл в слоты", details=f"ставка {bet}, изменение баланса: {change}")
-    await message.answer(result_text + f"\n{EMOJI['money']} Ваш новый баланс: {(admin['balance'] or 0) + change}")
+    await message.answer(result_text + f"\n{EMOJI['money']} Ваш новый баланс: {user_balance + change}")
 @bot.on.message(text=["/zov", "/zov <text>"])
 async def zov_cmd(message: Message, text: Optional[str] = None):
     if not await check_permission(message, "zov"): return
@@ -1541,6 +1893,147 @@ async def zov_cmd(message: Message, text: Optional[str] = None):
     await message.answer(final_message, disable_mentions=0)
     log_action(message.from_id, "использовал /zov", details=f"в чате {message.peer_id}")
 
+
+
+@bot.on.message(text="/bonuslist")
+async def bonuslist_cmd(message: Message):
+    if not await check_permission(message, "bonuslist"): 
+        # Можно сделать отдельный permission или использовать существующий
+        return
+    
+    # Получаем всех админов с бонусами
+    admins_with_bonuses = db.fetchall(
+        "SELECT * FROM admins WHERE chat_id = ? AND bonus IS NOT NULL AND bonus != '' ORDER BY level DESC",
+        (message.peer_id,)
+    )
+    
+    if not admins_with_bonuses:
+        return await message.answer(f"{EMOJI['info']} В этом чате нет активных бонусов у администраторов.")
+    
+    response_text = f"{EMOJI['money']} Список активных бонусов администраторов:\n\n"
+    
+    for i, admin in enumerate(admins_with_bonuses, 1):
+        response_text += (f"{i}. [id{admin['user_id']}|{admin['nickname']}] "
+                         f"({admin['position']}, ур: {admin['level']})\n"
+                         f"   {EMOJI['star']} Бонус: {admin['bonus']}\n\n")
+    
+    await message.answer(response_text[:4096], disable_mentions=1)
+
+@bot.on.message(text=["/unbonus", "/unbonus <text>"])
+async def unbonus_cmd(message: Message, text: Optional[str] = None):
+    if not await check_permission(message, "bonus"): 
+        return
+    
+    target_id, admin, _ = await parse_target_and_args(message)
+    if not admin: 
+        return await message.answer(f"{EMOJI['error']} Администратор не найден в этом чате.")
+    
+    target_global_data = db.get_user_global_data(target_id)
+    if target_global_data and target_global_data['dev_mode'] == 1 and message.from_id != admin['user_id']: 
+        return await message.answer(f"{EMOJI['lock']} Действие не может быть применено к этому администратору.")
+    
+    # Проверяем права снятия бонуса
+    issuer = db.get_admin_by_id(message.from_id, message.peer_id)
+    if not issuer:
+        return await message.answer(f"{EMOJI['error']} У вас нет прав администратора в этом чате.")
+    
+    if admin['level'] >= issuer['level'] and admin['user_id'] != issuer['user_id']:
+        return await message.answer(f"{EMOJI['error']} Нельзя снять бонус у админа с равным/большим уровнем!")
+    
+    # Проверяем, есть ли бонус
+    current_bonus = db.get_admin_bonus(target_id, message.peer_id)
+    if not current_bonus:
+        return await message.answer(f"{EMOJI['error']} У {admin['nickname']} нет активных бонусов.")
+    
+    # Снимаем бонус
+    db.remove_admin_bonus(target_id, message.peer_id)
+    log_action(message.from_id, "снял бонус", admin['user_id'], f"в чате {message.peer_id}")
+    
+    await message.answer(f"{EMOJI['success']} Бонус успешно снят с администратора {admin['nickname']}!")
+
+@bot.on.message(text=["/bonus", "/bonus <text>"])
+async def bonus_cmd(message: Message, text: Optional[str] = None):
+    if not await check_permission(message, "bonus"): 
+        # Добавим permission для этой команды
+        return
+    
+    if not text:
+        # Показываем справку
+        help_text = (f"{EMOJI['money']} Система бонусов для администраторов {EMOJI['money']}\n\n"
+                    f"{EMOJI['command']} Форматы команд:\n"
+                    f"/bonus @упом/ник <текст бонуса> - Выдать бонус админу\n"
+                    f"/unbonus @упом/ник - Снять бонус с админа\n"
+                    f"/bonuslist - Список всех бонусов в этом чате\n\n"
+                    f"{EMOJI['info']} Бонусы отображаются в профиле администратора и служат для поощрения за хорошую работу.")
+        return await message.answer(help_text)
+    
+    target_id, admin, bonus_text = await parse_target_and_args(message)
+    if not admin: 
+        return await message.answer(f"{EMOJI['error']} Администратор не найден в этом чате.")
+    
+    if not bonus_text:
+        # Показываем текущий бонус админа
+        current_bonus = db.get_admin_bonus(target_id, message.peer_id)
+        if current_bonus:
+            await message.answer(f"{EMOJI['money']} Текущий бонус {admin['nickname']}:\n{current_bonus}")
+        else:
+            await message.answer(f"{EMOJI['info']} У {admin['nickname']} нет активных бонусов.")
+        return
+    
+    target_global_data = db.get_user_global_data(target_id)
+    if target_global_data and target_global_data['dev_mode'] == 1 and message.from_id != admin['user_id']: 
+        return await message.answer(f"{EMOJI['lock']} Действие не может быть применено к этому администратору.")
+    
+    # Проверяем права выдачи бонуса (только админы с уровнем выше)
+    issuer = db.get_admin_by_id(message.from_id, message.peer_id)
+    if not issuer:
+        return await message.answer(f"{EMOJI['error']} У вас нет прав администратора в этом чате.")
+    
+    if admin['level'] >= issuer['level'] and admin['user_id'] != issuer['user_id']:
+        return await message.answer(f"{EMOJI['error']} Нельзя выдать бонус админу с равным/большим уровнем!")
+    
+    # Устанавливаем бонус
+    db.set_admin_bonus(target_id, message.peer_id, bonus_text.strip())
+    log_action(message.from_id, "выдал бонус", admin['user_id'], f"бонус: '{bonus_text.strip()}' в чате {message.peer_id}")
+    
+    await message.answer(f"{EMOJI['success']} Бонус успешно выдан администратору {admin['nickname']}!\n"
+                        f"{EMOJI['money']} Бонус: {bonus_text.strip()}")
+
+@bot.on.message(text=["/admins_all", "/all_admins"])
+async def admins_all_cmd(message: Message):
+    if not await check_permission(message, "admins"): 
+        return
+    
+    # Получаем всех админов включая снятых
+    all_admins = db.get_all_admins_including_inactive(message.peer_id)
+    
+    if not all_admins: 
+        return await message.answer(f"{EMOJI['list']} В базе данных этого чата нет администраторов.")
+    
+    # Разделяем активных и снятых
+    active_admins = []
+    inactive_admins = []
+    
+    for admin in all_admins:
+        # Исправляем: используем admin['status'] вместо admin.get('status')
+        if admin['status'] == 'Снят':
+            inactive_admins.append(admin)
+        else:
+            active_admins.append(admin)
+    
+    response = f"{EMOJI['list']} Все администраторы этого чата:\n\n"
+    
+    if active_admins:
+        response += f"{EMOJI['success']} Активные ({len(active_admins)}):\n"
+        for i, a in enumerate(active_admins, 1):
+            response += f"{i}. [id{a['user_id']}|{a['nickname']}] ({a['position']}, ур: {a['level']})\n"
+    
+    if inactive_admins:
+        response += f"\n{EMOJI['error']} Снятые ({len(inactive_admins)}):\n"
+        for i, a in enumerate(inactive_admins, 1):
+            response += f"{i}. [id{a['user_id']}|{a['nickname']}] ({a['position']}, ур: {a['level']}) - {a['status']}\n"
+    
+    await message.answer(response[:4096], disable_mentions=1)
 # Запуск бота
 def register_requestable_commands():
     COMMAND_HANDLERS.clear() 
@@ -1551,6 +2044,8 @@ def register_requestable_commands():
     COMMAND_HANDLERS["mute"], COMMAND_HANDLERS["unmute"] = mute_cmd, unmute_cmd
     COMMAND_HANDLERS["kick"], COMMAND_HANDLERS["setlvl"] = kick_cmd, setlvl_cmd
     COMMAND_HANDLERS["bladd"], COMMAND_HANDLERS["blrem"] = blacklist_add_cmd, blacklist_remove_cmd
+    COMMAND_HANDLERS["bonus"] = bonus_cmd
+    COMMAND_HANDLERS["unbonus"] = unbonus_cmd
     logger.info(f"Зарегистрировано {len(COMMAND_HANDLERS)} команд для системы запросов.")
 
 if __name__ == "__main__":
