@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic.*")
+warnings.filterwarnings("ignore", message=".*pydantic.error_wrappers.*")
 from vkbottle.bot import Bot, Message
 from vkbottle import Keyboard, Text, VKAPIError
 # from vkbottle.dispatch.rules import PayloadContainsRule  # Измененный импорт
@@ -596,8 +599,8 @@ class MessageLoggingMiddleware(BaseMiddleware):
             try: db.add_message(message.from_id, message.peer_id, datetime.now())
             except Exception as e: logger.error(f"Ошибка при логировании сообщения: {e}")
 
-# bot.labeler.message_view.register_middleware(MuteCheckMiddleware)
-# bot.labeler.message_view.register_middleware(MessageLoggingMiddleware)
+bot.labeler.message_view.register_middleware(MuteCheckMiddleware)
+bot.labeler.message_view.register_middleware(MessageLoggingMiddleware)
 
 async def check_expired_mutes():
     expired_mutes = db.get_expired_mutes()
@@ -1337,7 +1340,7 @@ async def unmute_cmd(message: Message, text: Optional[str] = None):
     if not target_id: return await message.answer(f"{EMOJI['error']} Цель не указана. Ответьте на сообщение или используйте @упом/ник.")
     mute_info = db.get_active_mute(target_id, message.peer_id)
     if not mute_info: return await message.answer(f"{EMOJI['error']} У этого пользователя нет активного мута.")
-    issuer = db.get_admin_by_id(message.from_id)
+    issuer = db.get_admin_by_id(message.from_id, message.peer_id)
     muted_by_admin = db.get_admin_by_id(mute_info['muted_by_id'])
     if muted_by_admin and muted_by_admin['level'] >= issuer['level'] and muted_by_admin['user_id'] != issuer['user_id']: return await message.answer(f"{EMOJI['error']} Нельзя снять мут от админа с равным/большим уровнем ({muted_by_admin['nickname']})!")
     db.remove_mute(target_id)
@@ -1362,11 +1365,23 @@ async def editcmd_cmd(message: Message, command: Optional[str] = None, level: Op
 # команда для установки глобального уровня
 @bot.on.message(text=["/editcmd_global <command> <level>", "/editcmd_global"])
 async def editcmd_global_cmd(message: Message, command: Optional[str] = None, level: Optional[str] = None):
-    if not await check_permission(message, "editcmd_global"): return
-    if not command or not level: return await message.answer(f"{EMOJI['error']} Формат: /editcmd_global <команда> <уровень>")
+    if not await check_permission(message, "editcmd_global"): 
+        return
+    if not command or not level: 
+        return await message.answer(f"{EMOJI['error']} Формат: /editcmd_global <команда> <уровень>")
+    
     clean_command = command.lower().lstrip('/')
-    try: new_level = int(level); assert 0 <= new_level <= 9
-    except: return await message.answer(f"{EMOJI['error']} Уровень должен быть числом от 0 до 9!")
+    try: 
+        new_level = int(level)
+        assert 0 <= new_level <= 9
+    except: 
+        return await message.answer(f"{EMOJI['error']} Уровень должен быть числом от 0 до 9!")
+    
+    # Устанавливаем глобальный уровень (chat_id = 0)
+    db.set_command_level(clean_command, new_level, 0)
+    log_action(message.from_id, "изменил глобальный уровень доступа к команде", 
+               details=f"/{clean_command} -> {new_level} (глобально)")
+    await message.answer(f"{EMOJI['success']} Глобальный уровень для /{clean_command} изменен на {new_level}!")
 
 @bot.on.message(text=["/bladd", "/bladd <text>"])
 async def blacklist_add_cmd(message: Message, text: Optional[str] = None):
@@ -1424,7 +1439,7 @@ async def blacklist_list_cmd(message: Message):
     except Exception: users_map = {}
     for i, entry in enumerate(blacklist_entries, 1):
         user_name = users_map.get(entry['user_id'], f"ID{entry['user_id']}")
-        added_by_admin = db.get_admin_by_id(entry['added_by'])
+        added_by_admin = db.get_admin_by_id(entry['added_by'], message.peer_id)
         added_by_info = f"[id{added_by_admin['user_id']}|{added_by_admin['nickname']}]" if added_by_admin else "Неизвестно"
         text += (f"{i}. [id{entry['user_id']}|{user_name}]\n - Причина: {entry['reason']}\n - Добавил: {added_by_info}\n\n")
     await message.answer(text)
@@ -1886,7 +1901,7 @@ async def zov_cmd(message: Message, text: Optional[str] = None):
     except VKAPIError as e:
         if e.code == 917: return await message.answer(f"{EMOJI['error']} Я не администратор в этом чате.")
         else: logger.error(f"Ошибка API при вызове /zov: {e}"); return await message.answer(f"{EMOJI['error']} Произошла ошибка API.")
-    caller_admin = db.get_admin_by_id(message.from_id)
+    caller_admin = db.get_admin_by_id(message.from_id, message.peer_id)
     caller_name = caller_admin['nickname'] if caller_admin else "Пользователь"
     final_message = (f"{EMOJI['megaphone']} Вы были вызваны Администратором [id{message.from_id}|{caller_name}]!\n\n" f"Сообщение: {text}\n\n{mentions}")
     if len(final_message) > 4096: return await message.answer(f"{EMOJI['error']} Сообщение слишком длинное.")
