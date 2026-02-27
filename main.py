@@ -1107,7 +1107,7 @@ async def unmute_cmd(message: Message, text: Optional[str] = None):
     if not await check_permission(message, "unmute"): return
     target_id, target_admin, _ = await parse_target_and_args(message)
     if not target_id: return await message.answer(f"{EMOJI['error']} Цель не указана. Ответьте на сообщение или используйте @упом/ник.")
-    mute_info = db.get_active_mute(target_id)
+    mute_info = db.get_active_mute(target_id, message.peer_id)
     if not mute_info: return await message.answer(f"{EMOJI['error']} У этого пользователя нет активного мута.")
     issuer = db.get_admin_by_id(message.from_id)
     muted_by_admin = db.get_admin_by_id(mute_info['muted_by_id'])
