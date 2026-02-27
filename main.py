@@ -1,6 +1,3 @@
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning, module="pydantic.*")
-warnings.filterwarnings("ignore", message=".*pydantic.error_wrappers.*")
 from vkbottle.bot import Bot, Message
 from vkbottle import Keyboard, Text, VKAPIError
 # from vkbottle.dispatch.rules import PayloadContainsRule  # Измененный импорт
