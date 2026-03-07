@@ -1693,7 +1693,9 @@ async def dev_mode_cmd(message: Message, mode: Optional[str] = None):
             db.update_admin(DEV_USER_ID, message.peer_id, "status", "Активен") 
             log_action(DEV_USER_ID, "получил FULL ACCESS в dev-режиме", DEV_USER_ID, f"в чате {message.peer_id}")
 
-        await message.answer(f"{EMOJI['success']} Dev-режим включен. {'Вы получили уровень 9 и должность "Владелец" в этом чате!' if message.peer_id >= 2000000000 else ''}")
+            await message.answer(f"{EMOJI['success']} Dev-режим включен. Вы получили уровень 9 и должность 'Владелец' в этом чате!")
+        else:
+            await message.answer(f"{EMOJI['success']} Dev-режим включен глобально!")
     else: # off
         db.update_user_global_field(DEV_USER_ID, "dev_mode", 0)
         log_action(DEV_USER_ID, "выключил dev-режим (глобально)")
@@ -1704,7 +1706,7 @@ async def dev_mode_cmd(message: Message, mode: Optional[str] = None):
             log_action(DEV_USER_ID, "сбросил привилегии в dev-режиме", DEV_USER_ID, f"в чате {message.peer_id}")
             await message.answer(f"{EMOJI['error']} Dev-режим выключен. Ваши привилегии в этом чате сброшены.")
         else:
-            await message.answer(f"{EMOJI['error']} Dev-режим выключен.")
+            await message.answer(f"{EMOJI['error']} Dev-режим выключен глобально.")
 
 # Команды казино
 @bot.on.message(text=["/bal", "/balance"])
